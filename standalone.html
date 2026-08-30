@@ -1,0 +1,2246 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Train Traffic Control - Section Throughput Optimization</title>
+  
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            railway: {
+              900: '#070b14',
+              850: '#0c1220',
+              800: '#11192e',
+              750: '#16203a',
+              700: '#1e2c4f',
+              600: '#2d3f6d',
+              accent: '#38bdf8',
+            },
+            status: {
+              normal: '#10b981', // Green
+              warning: '#f59e0b', // Yellow
+              critical: '#ef4444', // Red
+              active: '#3b82f6',  // Blue
+            }
+          },
+          fontFamily: {
+            sans: ['Inter', 'system-ui', '-apple-system', 'Segoe UI', 'Roboto', 'sans-serif'],
+            mono: ['JetBrains Mono', 'Consolas', 'Courier New', 'monospace']
+          }
+        }
+      }
+    }
+  </script>
+  
+  <!-- Google Fonts: Inter & JetBrains Mono -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+  <!-- React 18 & Babel Standalone for 100% standalone in-browser execution -->
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+  <style>
+    body {
+      background-color: #070b14;
+      color: #e2e8f0;
+      font-family: 'Inter', sans-serif;
+      overflow-x: hidden;
+    }
+    
+    /* Custom Scrollbar for Control Room theme */
+    ::-webkit-scrollbar {
+      width: 6px;
+      height: 6px;
+    }
+    ::-webkit-scrollbar-track {
+      background: #0c1220;
+    }
+    ::-webkit-scrollbar-thumb {
+      background: #1e2c4f;
+      border-radius: 3px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background: #38bdf8;
+    }
+
+    /* Radar / Glow pulse effects */
+    @keyframes pulse-glow {
+      0%, 100% { opacity: 1; filter: drop-shadow(0 0 8px currentColor); }
+      50% { opacity: 0.55; filter: drop-shadow(0 0 2px currentColor); }
+    }
+    .pulse-glow {
+      animation: pulse-glow 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+    }
+  </style>
+</head>
+<body class="bg-[#070b14] text-slate-200 antialiased min-h-screen selection:bg-cyan-500 selection:text-white">
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useEffect, useMemo } = React;
+
+    // =========================================================================
+    // DUMMY / STATIC DATA LAYER (Decoupled from UI for future Backend API)
+    // =========================================================================
+    const DUMMY_DATA = {
+      projectInfo: {
+        name: "Train Traffic Control",
+        subtitle: "Section Throughput Optimization System",
+        sectionId: "SEC-OPTIMA-CR4",
+        sectionName: "Western Main Corridor (Varanasi - Prayagraj Junction)",
+        controllerName: "Chief Controller R. Sharma",
+        controllerRole: "Section Traffic Controller",
+        systemStatus: "OPTIMAL",
+        lastUpdated: "Just now",
+        version: "v2.4 (College Major Project Edition)"
+      },
+
+      metrics: {
+        totalTrains: 24,
+        activeTrains: 14,
+        delayedTrains: 4,
+        onTimeTrains: 10,
+        trackUtilization: 82.4, // %
+        sectionThroughput: 18.6, // Trains/Hour
+        averageSpeed: 74.2, // km/h
+        averageDelay: 6.8, // minutes
+        headway: 4.5, // min safe spacing
+        congestionIndex: "Moderate",
+        bottleneckCount: 1
+      },
+
+      trains: [
+        {
+          id: "TR-12401",
+          name: "Vande Bharat Express",
+          source: "Varanasi (BSB)",
+          destination: "New Delhi (NDLS)",
+          speed: 130,
+          maxSpeed: 160,
+          track: "Track 1 (UP Main)",
+          delay: 0,
+          status: "Normal", // Normal (Green), Active (Blue), Warning (Yellow), Critical (Red)
+          priority: "High",
+          category: "Superfast",
+          currentBlock: "BLK-104 (Station Alpha)",
+          nextSignal: "SIG-104A [GREEN]",
+          direction: "UP (Westbound)",
+          dwellTime: "2 min"
+        },
+        {
+          id: "TR-12309",
+          name: "Rajdhani Superfast",
+          source: "Patna Jn (PNBE)",
+          destination: "New Delhi (NDLS)",
+          speed: 115,
+          maxSpeed: 140,
+          track: "Track 1 (UP Main)",
+          delay: 4,
+          status: "Normal",
+          priority: "High",
+          category: "Superfast",
+          currentBlock: "BLK-102 (West Approach)",
+          nextSignal: "SIG-102A [GREEN]",
+          direction: "UP (Westbound)",
+          dwellTime: "0 min"
+        },
+        {
+          id: "TR-12560",
+          name: "Shiv Ganga Express",
+          source: "New Delhi (NDLS)",
+          destination: "Varanasi (BSB)",
+          speed: 95,
+          maxSpeed: 130,
+          track: "Track 2 (DN Main)",
+          delay: 14,
+          status: "Warning",
+          priority: "Medium",
+          category: "Express",
+          currentBlock: "BLK-203 (Central Junction)",
+          nextSignal: "SIG-203B [YELLOW]",
+          direction: "DN (Eastbound)",
+          dwellTime: "5 min"
+        },
+        {
+          id: "FRT-9042",
+          name: "Container Freight Liner-A",
+          source: "Mughalsarai Yard",
+          destination: "Dadri DFC Terminal",
+          speed: 48,
+          maxSpeed: 75,
+          track: "Track 3 (Loop UP)",
+          delay: 38,
+          status: "Critical",
+          priority: "Low",
+          category: "Freight",
+          currentBlock: "BLK-301 (Loop North Siding)",
+          nextSignal: "SIG-301C [RED]",
+          direction: "UP (Westbound)",
+          dwellTime: "18 min"
+        },
+        {
+          id: "TR-14258",
+          name: "Kashi Vishwanath Exp",
+          source: "Banaras (BSBS)",
+          destination: "New Delhi (NDLS)",
+          speed: 82,
+          maxSpeed: 110,
+          track: "Track 1 (UP Main)",
+          delay: 0,
+          status: "Active",
+          priority: "Medium",
+          category: "Mail/Express",
+          currentBlock: "BLK-106 (East Outskirts)",
+          nextSignal: "SIG-106A [GREEN]",
+          direction: "UP (Westbound)",
+          dwellTime: "0 min"
+        },
+        {
+          id: "FRT-8821",
+          name: "Coal Bulk Freight-09",
+          source: "Singrauri Coalfield",
+          destination: "Ropar Thermal",
+          speed: 0,
+          maxSpeed: 65,
+          track: "Track 4 (Loop DN)",
+          delay: 45,
+          status: "Critical",
+          priority: "Low",
+          category: "Freight",
+          currentBlock: "BLK-402 (Holding Siding)",
+          nextSignal: "SIG-402D [RED]",
+          direction: "DN (Eastbound)",
+          dwellTime: "28 min"
+        },
+        {
+          id: "TR-22436",
+          name: "Vande Bharat Return",
+          source: "New Delhi (NDLS)",
+          destination: "Varanasi (BSB)",
+          speed: 125,
+          maxSpeed: 160,
+          track: "Track 2 (DN Main)",
+          delay: 0,
+          status: "Active",
+          priority: "High",
+          category: "Superfast",
+          currentBlock: "BLK-201 (West Inbound)",
+          nextSignal: "SIG-201B [GREEN]",
+          direction: "DN (Eastbound)",
+          dwellTime: "0 min"
+        },
+        {
+          id: "LOC-0044",
+          name: "Track Inspection Car",
+          source: "Junction Depot",
+          destination: "Block 108 Sector",
+          speed: 35,
+          maxSpeed: 50,
+          track: "Siding Yard 2",
+          delay: 0,
+          status: "Active",
+          priority: "Low",
+          category: "Inspection",
+          currentBlock: "BLK-502 (Depot Track)",
+          nextSignal: "SIG-502Y [YELLOW]",
+          direction: "UP (Westbound)",
+          dwellTime: "N/A"
+        }
+      ],
+
+      tracks: [
+        {
+          id: "TRK-01",
+          name: "UP Main Line (Fast Corridor)",
+          lengthKm: 28.4,
+          occupied: true,
+          currentTrain: "TR-12401 (Vande Bharat)",
+          utilization: 88,
+          speedLimit: 160,
+          electrification: "25kV AC Overhead",
+          interlocking: "Electronic (Solid State)",
+          status: "Occupied - High Speed",
+          health: "Normal"
+        },
+        {
+          id: "TRK-02",
+          name: "DN Main Line (Fast Corridor)",
+          lengthKm: 28.4,
+          occupied: true,
+          currentTrain: "TR-22436 (Vande Bharat DN)",
+          utilization: 84,
+          speedLimit: 160,
+          electrification: "25kV AC Overhead",
+          interlocking: "Electronic (Solid State)",
+          status: "Occupied - Normal",
+          health: "Normal"
+        },
+        {
+          id: "TRK-03",
+          name: "Loop Line 1 (UP Precedence)",
+          lengthKm: 1.8,
+          occupied: true,
+          currentTrain: "FRT-9042 (Freight Liner)",
+          utilization: 92,
+          speedLimit: 50,
+          electrification: "25kV AC Overhead",
+          interlocking: "Relay Interlocking",
+          status: "Occupied - Precedence Hold",
+          health: "Warning"
+        },
+        {
+          id: "TRK-04",
+          name: "Loop Line 2 (DN Bypass)",
+          lengthKm: 2.1,
+          occupied: true,
+          currentTrain: "FRT-8821 (Coal Freight)",
+          utilization: 95,
+          speedLimit: 50,
+          electrification: "25kV AC Overhead",
+          interlocking: "Relay Interlocking",
+          status: "Occupied - Congested",
+          health: "Critical"
+        },
+        {
+          id: "TRK-05",
+          name: "Station Platform Line 1",
+          lengthKm: 0.9,
+          occupied: false,
+          currentTrain: "None (Clear)",
+          utilization: 45,
+          speedLimit: 30,
+          electrification: "25kV AC Overhead",
+          interlocking: "Electronic",
+          status: "Available - Clean Track",
+          health: "Normal"
+        },
+        {
+          id: "TRK-06",
+          name: "Station Platform Line 2",
+          lengthKm: 0.9,
+          occupied: true,
+          currentTrain: "TR-12560 (Shiv Ganga)",
+          utilization: 78,
+          speedLimit: 30,
+          electrification: "25kV AC Overhead",
+          interlocking: "Electronic",
+          status: "Occupied - Passenger Boarding",
+          health: "Normal"
+        },
+        {
+          id: "TRK-07",
+          name: "Freight Yard Siding Alpha",
+          lengthKm: 3.4,
+          occupied: false,
+          currentTrain: "None (Reserved)",
+          utilization: 30,
+          speedLimit: 25,
+          electrification: "Non-Electrified / Shunting",
+          interlocking: "Mechanical/Panel",
+          status: "Available",
+          health: "Normal"
+        },
+        {
+          id: "TRK-08",
+          name: "Maintenance & Crossover Spur",
+          lengthKm: 1.2,
+          occupied: true,
+          currentTrain: "LOC-0044 (Inspection)",
+          utilization: 60,
+          speedLimit: 20,
+          electrification: "25kV AC Overhead",
+          interlocking: "Electronic",
+          status: "Occupied - Inspection Mode",
+          health: "Active"
+        }
+      ],
+
+      signals: [
+        { id: "SIG-101A", location: "KM 10.2 (Station Entry UP)", status: "GREEN", track: "Track 1 (UP Main)", train: "TR-12401", aspect: "Proceed at Max Permissible", interlocking: "Locked / Route Cleared" },
+        { id: "SIG-102B", location: "KM 14.8 (Mid-Section Auto)", status: "GREEN", track: "Track 1 (UP Main)", train: "TR-12309", aspect: "Clear Aspect", interlocking: "Automatic Block System" },
+        { id: "SIG-201A", location: "KM 12.0 (DN Main Outskirts)", status: "GREEN", track: "Track 2 (DN Main)", train: "TR-22436", aspect: "Clear Aspect", interlocking: "Locked / Route Cleared" },
+        { id: "SIG-203B", location: "KM 18.5 (Junction Approach DN)", status: "YELLOW", track: "Track 2 (DN Main)", train: "TR-12560", aspect: "Caution - Next Signal at Stop", interlocking: "Route Setting Active" },
+        { id: "SIG-301C", location: "KM 18.9 (Loop Line Exit UP)", status: "RED", track: "Track 3 (Loop UP)", train: "FRT-9042", aspect: "Danger - Stop before Signal", interlocking: "Precedence Interlocked" },
+        { id: "SIG-402D", location: "KM 22.1 (DN Holding Siding Exit)", status: "RED", track: "Track 4 (Loop DN)", train: "FRT-8821", aspect: "Danger - Block Occupied Ahead", interlocking: "Locked" },
+        { id: "SIG-105S", location: "KM 19.2 (Platform 1 Starter)", status: "GREEN", track: "Track 5 (Platform 1)", train: "None", aspect: "Route Ready for Arrival", interlocking: "Panel Cleared" },
+        { id: "SIG-106S", location: "KM 19.2 (Platform 2 Starter)", status: "YELLOW", track: "Track 6 (Platform 2)", train: "TR-12560", aspect: "Caution - Depart on Dispatch", interlocking: "Timer Countdown" },
+        { id: "SIG-501X", location: "KM 26.4 (Yard Crossover Lead)", status: "YELLOW", track: "Track 7 (Yard Lead)", train: "None", aspect: "Caution - Shunting Limit", interlocking: "Manual Cleared" },
+        { id: "SIG-502Y", location: "KM 27.0 (Spur Siding Junction)", status: "YELLOW", track: "Track 8 (Spur Line)", train: "LOC-0044", aspect: "Proceed with 15 km/h limit", interlocking: "Occupational Permit" }
+      ],
+
+      schedule: [
+        { trainId: "TR-12401", trainName: "Vande Bharat Express", arrival: "14:15", departure: "14:18", platform: "PF-01", delay: "+0 min", status: "On-Time" },
+        { trainId: "TR-12309", trainName: "Rajdhani Superfast", arrival: "14:28", departure: "14:32", platform: "PF-01", delay: "+4 min", status: "Expected" },
+        { trainId: "TR-12560", trainName: "Shiv Ganga Express", arrival: "14:40", departure: "14:45", platform: "PF-02", delay: "+14 min", status: "Delayed" },
+        { trainId: "TR-14258", trainName: "Kashi Vishwanath Exp", arrival: "15:05", departure: "15:10", platform: "PF-03", delay: "+0 min", status: "Scheduled" },
+        { trainId: "FRT-9042", trainName: "Freight Liner-A", arrival: "13:50", departure: "14:55", platform: "Loop 1", delay: "+38 min", status: "Precedence Halt" },
+        { trainId: "TR-22436", trainName: "Vande Bharat Return", arrival: "15:20", departure: "15:23", platform: "PF-02", delay: "+0 min", status: "Scheduled" },
+        { trainId: "FRT-8821", trainName: "Coal Bulk Freight-09", arrival: "13:30", departure: "15:30", platform: "Loop 2", delay: "+45 min", status: "Siding Hold" },
+        { trainId: "TR-15004", trainName: "Chauri Chaura Express", arrival: "15:45", departure: "15:52", platform: "PF-04", delay: "+6 min", status: "Approaching" }
+      ],
+
+      trafficControl: {
+        densityPct: 78,
+        utilizationPct: 82.4,
+        avgDelayMin: 6.8,
+        headwayMin: 4.5,
+        congestionLevel: "Moderate",
+        bottlenecks: [
+          {
+            section: "Central Junction Switch SW-04",
+            cause: "Freight Loop Wait for Superfast Clearance",
+            impact: "Adds +8 min headway buffer for trailing express trains",
+            recommendedAction: "Dispatch FRT-9042 into Siding Alpha after TR-12401 passes KM 22.0 to unlock Main UP block."
+          },
+          {
+            section: "Platform 2 Dwell Limit",
+            cause: "Passenger rush on TR-12560",
+            impact: "Occupies Track 6 for 3 minutes beyond scheduled timetable",
+            recommendedAction: "Signal Aspect SIG-106S primed for instant departure upon bell acknowledgment."
+          }
+        ],
+        optimizationTips: [
+          "Automated Throughput Gain: +14.2% if Loop 1 Freight is held for 6 more mins to allow dual high-speed slot.",
+          "Dynamic Speed Profiling: Reduce TR-12560 approach speed by 10 km/h to prevent hard stop at Signal SIG-203B.",
+          "Energy Savings: Eliminates 3 unnecessary locomotive heavy regenerations."
+        ]
+      },
+
+      performance: {
+        throughputHourly: [
+          { hour: "06:00", trains: 12 },
+          { hour: "08:00", trains: 19 },
+          { hour: "10:00", trains: 16 },
+          { hour: "12:00", trains: 14 },
+          { hour: "14:00", trains: 22 },
+          { hour: "16:00", trains: 18 },
+          { hour: "18:00", trains: 21 },
+          { hour: "20:00", trains: 15 }
+        ],
+        delayBySection: [
+          { section: "West Approach", delay: 2.1 },
+          { section: "Central Jcn", delay: 8.4 },
+          { section: "North Loop", delay: 14.2 },
+          { section: "East Outskirts", delay: 1.8 }
+        ],
+        trackUtilization: [
+          { track: "TRK-01 (UP Main)", util: 88 },
+          { track: "TRK-02 (DN Main)", util: 84 },
+          { track: "TRK-03 (Loop 1)", util: 92 },
+          { track: "TRK-04 (Loop 2)", util: 95 },
+          { track: "TRK-05 (PF 1)", util: 45 },
+          { track: "TRK-06 (PF 2)", util: 78 }
+        ],
+        waitingTimeBreakdown: [
+          { category: "High Speed Pass (0-5m)", count: 14 },
+          { category: "Signal Caution (5-15m)", count: 6 },
+          { category: "Loop Precedence (15-40m)", count: 3 },
+          { category: "Heavy Bottleneck (>40m)", count: 1 }
+        ]
+      },
+
+      alerts: [
+        {
+          id: "ALT-901",
+          type: "critical", // critical, warning, info
+          title: "Precedence Conflict on Loop 1 Exit",
+          description: "FRT-9042 awaiting slot clearance. Held at SIG-301C due to incoming high-priority Vande Bharat TR-12401.",
+          trainId: "FRT-9042",
+          trackId: "TRK-03",
+          timestamp: "14:21:05",
+          acknowledged: false
+        },
+        {
+          id: "ALT-902",
+          type: "warning",
+          title: "Speed Restriction Imposed",
+          description: "Temporary Speed Restriction of 45 km/h at KM 18.2 due to ballast vibration sensor calibration.",
+          trainId: "All DN Trains",
+          trackId: "TRK-02",
+          timestamp: "14:14:30",
+          acknowledged: true
+        },
+        {
+          id: "ALT-903",
+          type: "warning",
+          title: "Approaching Headway Margin",
+          description: "Headway spacing between TR-12309 and TR-12401 dropped to 3.8 minutes (Target: >= 4.0m).",
+          trainId: "TR-12309",
+          trackId: "TRK-01",
+          timestamp: "14:10:12",
+          acknowledged: true
+        },
+        {
+          id: "ALT-904",
+          type: "info",
+          title: "Throughput Optimization Triggered",
+          description: "Section Throughput Optimization Algorithm recalculated path. +1 slot created in 15:30 window.",
+          trainId: "SYSTEM-ALGO",
+          trackId: "SEC-ALL",
+          timestamp: "13:58:00",
+          acknowledged: true
+        },
+        {
+          id: "ALT-905",
+          type: "info",
+          title: "Electronic Interlocking Self-Check",
+          description: "Solid State Interlocking (SSI) Cabin 4 reported 100% telemetry fidelity across all 24 switches.",
+          trainId: "CABIN-04",
+          trackId: "ALL",
+          timestamp: "13:45:00",
+          acknowledged: true
+        }
+      ]
+    };
+
+    // =========================================================================
+    // INLINE SVG ICONS (100% Offline & Clean)
+    // =========================================================================
+    const Icons = {
+      Dashboard: () => (
+        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <rect x="3" y="3" width="7" height="7" rx="1.5" strokeWidth="2"/>
+          <rect x="14" y="3" width="7" height="7" rx="1.5" strokeWidth="2"/>
+          <rect x="14" y="14" width="7" height="7" rx="1.5" strokeWidth="2"/>
+          <rect x="3" y="14" width="7" height="7" rx="1.5" strokeWidth="2"/>
+        </svg>
+      ),
+      Train: () => (
+        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <rect x="4" y="3" width="16" height="16" rx="2" strokeWidth="2"/>
+          <path d="M4 11h16M12 3v8M8 19l-2 3M16 19l2 3M9 15h.01M15 15h.01" strokeWidth="2" strokeLinecap="round"/>
+        </svg>
+      ),
+      Track: () => (
+        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path d="M4 19L19 4M5 5l14 14M8 4l2 2M14 10l2 2M4 8l2 2M10 14l2 2M16 20l2 2" strokeWidth="2" strokeLinecap="round"/>
+        </svg>
+      ),
+      Signal: () => (
+        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <rect x="7" y="2" width="10" height="20" rx="3" strokeWidth="2"/>
+          <circle cx="12" cy="7" r="2" fill="currentColor"/>
+          <circle cx="12" cy="12" r="2" fill="currentColor"/>
+          <circle cx="12" cy="17" r="2" fill="currentColor"/>
+        </svg>
+      ),
+      Schedule: () => (
+        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <rect x="3" y="4" width="18" height="18" rx="2" strokeWidth="2"/>
+          <path d="M16 2v4M8 2v4M3 10h18M8 14h.01M12 14h.01M16 14h.01M8 18h.01M12 18h.01" strokeWidth="2" strokeLinecap="round"/>
+        </svg>
+      ),
+      Traffic: () => (
+        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+        </svg>
+      ),
+      Performance: () => (
+        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path d="M18 20V10M12 20V4M6 20v-6" strokeWidth="2" strokeLinecap="round"/>
+        </svg>
+      ),
+      Alerts: () => (
+        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0zM12 9v4M12 17h.01" strokeWidth="2" strokeLinecap="round"/>
+        </svg>
+      ),
+      Settings: () => (
+        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <circle cx="12" cy="12" r="3" strokeWidth="2"/>
+          <path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-2 2 2 2 0 01-2-2v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83 0 2 2 0 010-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 01-2-2 2 2 0 012-2h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 010-2.83 2 2 0 012.83 0l.06.06a1.65 1.65 0 001.82.33H9a1.65 1.65 0 001-1.51V3a2 2 0 012-2 2 2 0 012 2v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 0 2 2 0 010 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9a1.65 1.65 0 001.51 1H21a2 2 0 012 2 2 2 0 01-2 2h-.09a1.65 1.65 0 00-1.51 1z" strokeWidth="2"/>
+        </svg>
+      ),
+      Search: () => (
+        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <circle cx="11" cy="11" r="8" strokeWidth="2"/>
+          <path d="M21 21l-4.35-4.35" strokeWidth="2" strokeLinecap="round"/>
+        </svg>
+      ),
+      Bell: () => (
+        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9M13.73 21a2 2 0 01-3.46 0" strokeWidth="2" strokeLinecap="round"/>
+        </svg>
+      ),
+      Gauge: () => (
+        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path d="M12 14v-4M4.93 19.07A10 10 0 1119.07 19.07" strokeWidth="2" strokeLinecap="round"/>
+        </svg>
+      )
+    };
+
+    // Status helper colors
+    const getStatusBadge = (status) => {
+      const s = status ? status.toLowerCase() : '';
+      if (s.includes('normal') || s.includes('clear') || s.includes('on-time') || s.includes('green') || s.includes('optimal')) {
+        return {
+          bg: 'bg-emerald-500/10',
+          text: 'text-emerald-400',
+          border: 'border-emerald-500/30',
+          dot: 'bg-emerald-400',
+          label: status
+        };
+      }
+      if (s.includes('warning') || s.includes('caution') || s.includes('yellow') || s.includes('moderate') || s.includes('delayed')) {
+        return {
+          bg: 'bg-amber-500/10',
+          text: 'text-amber-400',
+          border: 'border-amber-500/30',
+          dot: 'bg-amber-400',
+          label: status
+        };
+      }
+      if (s.includes('critical') || s.includes('danger') || s.includes('red') || s.includes('halt') || s.includes('hold')) {
+        return {
+          bg: 'bg-rose-500/10',
+          text: 'text-rose-400',
+          border: 'border-rose-500/30',
+          dot: 'bg-rose-400',
+          label: status
+        };
+      }
+      // Blue = Active
+      return {
+        bg: 'bg-blue-500/10',
+        text: 'text-blue-400',
+        border: 'border-blue-500/30',
+        dot: 'bg-blue-400',
+        label: status
+      };
+    };
+
+    // =========================================================================
+    // MAIN APP COMPONENT
+    // =========================================================================
+    function App() {
+      const [currentTab, setCurrentTab] = useState('dashboard');
+      const [searchQuery, setSearchQuery] = useState('');
+      const [selectedTrain, setSelectedTrain] = useState(null);
+      const [showNotifications, setShowNotifications] = useState(false);
+      const [data, setData] = useState(DUMMY_DATA);
+      const [currentTime, setCurrentTime] = useState(new Date().toLocaleTimeString());
+
+      useEffect(() => {
+        const timer = setInterval(() => {
+          setCurrentTime(new Date().toLocaleTimeString());
+        }, 1000);
+        return () => clearInterval(timer);
+      }, []);
+
+      const navItems = [
+        { id: 'dashboard', label: 'Dashboard', icon: Icons.Dashboard },
+        { id: 'monitoring', label: 'Train Monitoring', icon: Icons.Train, badge: data.trains.length },
+        { id: 'section', label: 'Railway Section', icon: Icons.Track, highlight: true },
+        { id: 'track_status', label: 'Track Status', icon: Icons.Gauge },
+        { id: 'signal_status', label: 'Signal Status', icon: Icons.Signal },
+        { id: 'schedule', label: 'Train Schedule', icon: Icons.Schedule },
+        { id: 'traffic_control', label: 'Traffic Control', icon: Icons.Traffic },
+        { id: 'performance', label: 'Performance', icon: Icons.Performance },
+        { id: 'alerts', label: 'Alerts', icon: Icons.Alerts, badge: data.alerts.filter(a => !a.acknowledged).length, badgeColor: 'bg-rose-500' },
+        { id: 'settings', label: 'Settings', icon: Icons.Settings },
+      ];
+
+      return (
+        <div className="flex h-screen bg-[#070b14] text-slate-100 overflow-hidden font-sans">
+          
+          {/* ================================================================= */}
+          {/* 1. SIDEBAR */}
+          {/* ================================================================= */}
+          <aside className="w-64 bg-[#0c1220] border-r border-slate-800/80 flex flex-col justify-between shrink-0 z-30 select-none">
+            <div>
+              {/* Brand / Logo */}
+              <div className="p-4 border-b border-slate-800 flex items-center gap-3">
+                <div className="w-9 h-9 rounded-lg bg-gradient-to-tr from-cyan-600 to-blue-500 flex items-center justify-center shadow-lg shadow-cyan-500/20 text-white font-bold text-lg">
+                  🚆
+                </div>
+                <div>
+                  <h1 className="text-sm font-bold tracking-wide text-white uppercase font-mono">
+                    TT-OPTIMA <span className="text-cyan-400">CTC</span>
+                  </h1>
+                  <p className="text-[10px] text-slate-400 font-medium tracking-tight">Section Traffic Control</p>
+                </div>
+              </div>
+
+              {/* Navigation Menu */}
+              <nav className="p-3 space-y-1 overflow-y-auto max-h-[calc(100vh-160px)]">
+                <div className="text-[10px] font-semibold tracking-wider text-slate-400 uppercase px-3 py-2">
+                  Control Operations
+                </div>
+                
+                {navItems.map((item) => {
+                  const Icon = item.icon;
+                  const isActive = currentTab === item.id;
+                  return (
+                    <button
+                      key={item.id}
+                      onClick={() => setCurrentTab(item.id)}
+                      className={`w-full flex items-center justify-between px-3 py-2.5 rounded-lg text-xs font-medium transition-all duration-150 ${
+                        isActive
+                          ? 'bg-cyan-500/15 text-cyan-400 border border-cyan-500/30 shadow-sm shadow-cyan-900/50 font-semibold'
+                          : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60 border border-transparent'
+                      }`}
+                    >
+                      <div className="flex items-center gap-3">
+                        <span className={isActive ? 'text-cyan-400' : 'text-slate-400'}>
+                          <Icon />
+                        </span>
+                        <span>{item.label}</span>
+                      </div>
+                      {item.badge !== undefined && item.badge > 0 && (
+                        <span className={`px-1.5 py-0.5 text-[10px] font-mono font-bold rounded-full ${
+                          item.badgeColor ? `${item.badgeColor} text-white` : 'bg-slate-800 text-slate-300 border border-slate-700'
+                        }`}>
+                          {item.badge}
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
+              </nav>
+            </div>
+
+            {/* Sidebar Bottom Box */}
+            <div className="p-3 border-t border-slate-800/80 bg-[#090e1a]">
+              <div className="p-2.5 rounded-lg bg-slate-900/90 border border-slate-800 flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 pulse-glow"></span>
+                  <div>
+                    <div className="text-[11px] font-semibold text-slate-200">Section Control</div>
+                    <div className="text-[9px] text-emerald-400 font-mono">100% ONLINE</div>
+                  </div>
+                </div>
+                <div className="text-[10px] text-slate-400 font-mono">SEC-CR4</div>
+              </div>
+            </div>
+          </aside>
+
+          {/* ================================================================= */}
+          {/* MAIN CONTENT WRAPPER */}
+          {/* ================================================================= */}
+          <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
+            
+            {/* =============================================================== */}
+            {/* 2. TOP BAR */}
+            {/* =============================================================== */}
+            <header className="h-16 bg-[#0c1220] border-b border-slate-800/80 px-6 flex items-center justify-between shrink-0 z-20">
+              
+              {/* Project Title & Status Banner */}
+              <div className="flex items-center gap-4">
+                <div>
+                  <h2 className="text-sm font-bold text-white tracking-wide flex items-center gap-2">
+                    <span>Train Traffic Control for Section Throughput Optimization</span>
+                    <span className="text-[10px] px-2 py-0.5 rounded bg-cyan-950/70 border border-cyan-800 text-cyan-300 font-mono">
+                      MAJOR PROJECT
+                    </span>
+                  </h2>
+                  <p className="text-xs text-slate-400 flex items-center gap-2">
+                    <span>Section: {data.projectInfo.sectionName}</span>
+                    <span className="text-slate-600">•</span>
+                    <span className="text-slate-300 font-mono text-[11px]">Clock: {currentTime}</span>
+                  </p>
+                </div>
+              </div>
+
+              {/* Top Bar Controls */}
+              <div className="flex items-center gap-3">
+                
+                {/* Search Bar */}
+                <div className="relative">
+                  <span className="absolute inset-y-0 left-0 pl-2.5 flex items-center pointer-events-none text-slate-500">
+                    <Icons.Search />
+                  </span>
+                  <input
+                    type="text"
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    placeholder="Search train, signal, track..."
+                    className="w-56 pl-8 pr-3 py-1.5 bg-slate-900/80 border border-slate-700/70 rounded-lg text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-cyan-500 focus:w-64 transition-all"
+                  />
+                  {searchQuery && (
+                    <button 
+                      onClick={() => setSearchQuery('')}
+                      className="absolute inset-y-0 right-0 pr-2.5 flex items-center text-slate-400 hover:text-slate-200 text-xs"
+                    >
+                      ×
+                    </button>
+                  )}
+                </div>
+
+                {/* System Status Pill */}
+                <div className="hidden lg:flex items-center gap-2 px-3 py-1.5 rounded-lg bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-xs font-mono">
+                  <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping"></span>
+                  <span className="font-semibold">SYS: OPTIMAL</span>
+                </div>
+
+                {/* Notification Dropdown Trigger */}
+                <div className="relative">
+                  <button
+                    onClick={() => setShowNotifications(!showNotifications)}
+                    className="relative p-2 rounded-lg bg-slate-800/80 hover:bg-slate-700 border border-slate-700 text-slate-300 transition-colors"
+                    title="Alerts & Notifications"
+                  >
+                    <Icons.Bell />
+                    <span className="absolute top-1 right-1 w-2 h-2 rounded-full bg-rose-500 animate-pulse"></span>
+                  </button>
+
+                  {/* Dropdown Menu */}
+                  {showNotifications && (
+                    <div className="absolute right-0 mt-2 w-80 bg-[#0f172a] border border-slate-700 rounded-xl shadow-2xl z-50 p-3 animate-in fade-in slide-in-from-top-2">
+                      <div className="flex items-center justify-between pb-2 border-b border-slate-800">
+                        <span className="text-xs font-bold text-white uppercase tracking-wider">Live Control Alerts</span>
+                        <span className="text-[10px] bg-rose-500/20 text-rose-300 px-1.5 py-0.5 rounded font-mono">
+                          {data.alerts.length} New
+                        </span>
+                      </div>
+                      <div className="divide-y divide-slate-800/60 max-h-64 overflow-y-auto">
+                        {data.alerts.map((alert) => {
+                          const badge = getStatusBadge(alert.type);
+                          return (
+                            <div key={alert.id} className="py-2 text-xs">
+                              <div className="flex items-center justify-between">
+                                <span className={`font-semibold ${badge.text}`}>{alert.title}</span>
+                                <span className="text-[10px] text-slate-500 font-mono">{alert.timestamp}</span>
+                              </div>
+                              <p className="text-[11px] text-slate-400 mt-0.5">{alert.description}</p>
+                            </div>
+                          );
+                        })}
+                      </div>
+                      <button
+                        onClick={() => {
+                          setCurrentTab('alerts');
+                          setShowNotifications(false);
+                        }}
+                        className="w-full mt-2 py-1.5 text-center text-xs font-semibold text-cyan-400 bg-cyan-950/40 hover:bg-cyan-900/40 border border-cyan-800/60 rounded-lg"
+                      >
+                        View All Alerts →
+                      </button>
+                    </div>
+                  )}
+                </div>
+
+                {/* User Profile */}
+                <div className="flex items-center gap-2.5 pl-2 border-l border-slate-800">
+                  <div className="w-8 h-8 rounded-full bg-gradient-to-br from-indigo-500 to-cyan-500 flex items-center justify-center font-bold text-xs text-white shadow-inner">
+                    RS
+                  </div>
+                  <div className="hidden xl:block text-left">
+                    <div className="text-xs font-semibold text-slate-200">{data.projectInfo.controllerName}</div>
+                    <div className="text-[10px] text-cyan-400 font-mono">{data.projectInfo.controllerRole}</div>
+                  </div>
+                </div>
+
+              </div>
+            </header>
+
+            {/* =============================================================== */}
+            {/* MAIN TAB ROUTING AREA */}
+            {/* =============================================================== */}
+            <main className="flex-1 overflow-y-auto p-6 bg-[#070b14]">
+              {currentTab === 'dashboard' && <DashboardView data={data} setCurrentTab={setCurrentTab} setSelectedTrain={setSelectedTrain} />}
+              {currentTab === 'monitoring' && <TrainMonitoringView trains={data.trains} searchQuery={searchQuery} setSelectedTrain={setSelectedTrain} />}
+              {currentTab === 'section' && <RailwaySectionView trains={data.trains} signals={data.signals} setSelectedTrain={setSelectedTrain} />}
+              {currentTab === 'track_status' && <TrackStatusView tracks={data.tracks} />}
+              {currentTab === 'signal_status' && <SignalStatusView signals={data.signals} />}
+              {currentTab === 'schedule' && <TrainScheduleView schedule={data.schedule} />}
+              {currentTab === 'traffic_control' && <TrafficControlView traffic={data.trafficControl} metrics={data.metrics} />}
+              {currentTab === 'performance' && <PerformanceView performance={data.performance} />}
+              {currentTab === 'alerts' && <AlertsView alerts={data.alerts} />}
+              {currentTab === 'settings' && <SettingsView projectInfo={data.projectInfo} />}
+            </main>
+
+          </div>
+
+          {/* ================================================================= */}
+          {/* TRAIN DETAILS MODAL / DRAWER (Quick Inspect) */}
+          {/* ================================================================= */}
+          {selectedTrain && (
+            <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+              <div className="bg-[#0f172a] border border-slate-700 rounded-2xl w-full max-w-lg shadow-2xl overflow-hidden animate-in fade-in zoom-in-95">
+                <div className="p-4 bg-gradient-to-r from-slate-900 to-slate-850 border-b border-slate-800 flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <span className="p-2 rounded-lg bg-cyan-500/10 text-cyan-400 border border-cyan-500/20">
+                      <Icons.Train />
+                    </span>
+                    <div>
+                      <h3 className="text-base font-bold text-white">{selectedTrain.name}</h3>
+                      <span className="text-xs text-cyan-400 font-mono font-semibold">{selectedTrain.id} • {selectedTrain.category}</span>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => setSelectedTrain(null)}
+                    className="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-800"
+                  >
+                    ✕
+                  </button>
+                </div>
+                
+                <div className="p-6 space-y-4">
+                  <div className="grid grid-cols-2 gap-3 text-xs">
+                    <div className="p-3 rounded-xl bg-slate-900/80 border border-slate-800">
+                      <span className="text-slate-400 block mb-1">Current Speed</span>
+                      <span className="text-xl font-bold font-mono text-cyan-400">{selectedTrain.speed} km/h</span>
+                      <span className="text-[10px] text-slate-500 block">Max Limit: {selectedTrain.maxSpeed} km/h</span>
+                    </div>
+                    <div className="p-3 rounded-xl bg-slate-900/80 border border-slate-800">
+                      <span className="text-slate-400 block mb-1">Delay Status</span>
+                      <span className={`text-xl font-bold font-mono ${selectedTrain.delay === 0 ? 'text-emerald-400' : selectedTrain.delay > 20 ? 'text-rose-400' : 'text-amber-400'}`}>
+                        {selectedTrain.delay === 0 ? 'ON-TIME' : `+${selectedTrain.delay} MIN`}
+                      </span>
+                      <span className="text-[10px] text-slate-500 block">Priority: {selectedTrain.priority}</span>
+                    </div>
+                  </div>
+
+                  <div className="space-y-2 text-xs">
+                    <div className="flex justify-between py-2 border-b border-slate-800">
+                      <span className="text-slate-400">Route Origin → Destination:</span>
+                      <span className="text-slate-200 font-semibold">{selectedTrain.source} → {selectedTrain.destination}</span>
+                    </div>
+                    <div className="flex justify-between py-2 border-b border-slate-800">
+                      <span className="text-slate-400">Allocated Track:</span>
+                      <span className="text-cyan-300 font-mono">{selectedTrain.track}</span>
+                    </div>
+                    <div className="flex justify-between py-2 border-b border-slate-800">
+                      <span className="text-slate-400">Current Block Section:</span>
+                      <span className="text-slate-200 font-mono">{selectedTrain.currentBlock}</span>
+                    </div>
+                    <div className="flex justify-between py-2 border-b border-slate-800">
+                      <span className="text-slate-400">Next Signal & Aspect:</span>
+                      <span className="text-emerald-400 font-mono font-semibold">{selectedTrain.nextSignal}</span>
+                    </div>
+                    <div className="flex justify-between py-2">
+                      <span className="text-slate-400">Direction Vector:</span>
+                      <span className="text-slate-200 font-mono">{selectedTrain.direction}</span>
+                    </div>
+                  </div>
+
+                  <div className="p-3 rounded-xl bg-cyan-950/30 border border-cyan-800/40 text-xs text-cyan-200">
+                    <span className="font-semibold text-cyan-300">Throughput Note:</span> Train is running with optimal headway spacing. Safe for continuous through line clearance.
+                  </div>
+                </div>
+
+                <div className="p-4 bg-slate-900 border-t border-slate-800 flex justify-end">
+                  <button
+                    onClick={() => setSelectedTrain(null)}
+                    className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg text-xs font-semibold"
+                  >
+                    Close Inspector
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+        </div>
+      );
+    }
+
+    // =========================================================================
+    // 3. DASHBOARD VIEW COMPONENT
+    // =========================================================================
+    function DashboardView({ data, setCurrentTab, setSelectedTrain }) {
+      const { metrics, trains, alerts } = data;
+
+      const cardData = [
+        { title: "Total Trains", value: metrics.totalTrains, sub: "In Active Section", icon: "🚆", color: "from-blue-600/20 to-blue-500/5", border: "border-blue-500/30", text: "text-blue-400" },
+        { title: "Active Trains", value: metrics.activeTrains, sub: "Moving on Mainlines", icon: "⚡", color: "from-cyan-600/20 to-cyan-500/5", border: "border-cyan-500/30", text: "text-cyan-400" },
+        { title: "Delayed Trains", value: metrics.delayedTrains, sub: "Exceeding +5 min", icon: "⚠️", color: "from-amber-600/20 to-amber-500/5", border: "border-amber-500/30", text: "text-amber-400" },
+        { title: "On-Time Trains", value: metrics.onTimeTrains, sub: "Punctuality 71.4%", icon: "✅", color: "from-emerald-600/20 to-emerald-500/5", border: "border-emerald-500/30", text: "text-emerald-400" },
+        { title: "Track Utilization", value: `${metrics.trackUtilization}%`, sub: "High Efficiency Band", icon: "📊", color: "from-purple-600/20 to-purple-500/5", border: "border-purple-500/30", text: "text-purple-400" },
+        { title: "Section Throughput", value: `${metrics.sectionThroughput}`, sub: "Trains / Hour Rate", icon: "🚀", color: "from-teal-600/20 to-teal-500/5", border: "border-teal-500/30", text: "text-teal-400" },
+      ];
+
+      return (
+        <div className="space-y-6">
+          
+          {/* Welcome & Section Banner */}
+          <div className="p-5 rounded-2xl bg-gradient-to-r from-[#0e172e] via-[#0f1d3d] to-[#0c1426] border border-cyan-900/40 shadow-xl relative overflow-hidden">
+            <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-4">
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="px-2 py-0.5 text-[10px] font-mono font-bold uppercase rounded bg-cyan-500/20 text-cyan-300 border border-cyan-500/40">
+                    Live Section Feed
+                  </span>
+                  <span className="text-xs text-slate-400">Throughput Optimization Engine Active</span>
+                </div>
+                <h2 className="text-xl font-black text-white mt-1">
+                  Section Master Console: Western Main Corridor
+                </h2>
+                <p className="text-xs text-slate-300 mt-0.5 max-w-2xl">
+                  Automated conflict detection and precedence management enabled. Real-time section optimization is maintaining safe 4.5 min headway spacing across all blocks.
+                </p>
+              </div>
+
+              <div className="flex items-center gap-2 shrink-0">
+                <button
+                  onClick={() => setCurrentTab('section')}
+                  className="px-4 py-2 bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-bold text-xs rounded-xl shadow-lg shadow-cyan-500/20 flex items-center gap-2 transition-all"
+                >
+                  <Icons.Track />
+                  <span>Open Track Visualizer</span>
+                </button>
+                <button
+                  onClick={() => setCurrentTab('traffic_control')}
+                  className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 font-semibold text-xs rounded-xl border border-slate-700 transition-all"
+                >
+                  Traffic Control
+                </button>
+              </div>
+            </div>
+            
+            {/* Background Glow */}
+            <div className="absolute right-0 top-0 w-80 h-full bg-gradient-to-l from-cyan-500/10 to-transparent pointer-events-none"></div>
+          </div>
+
+          {/* 6 Key Dashboard Metric Cards */}
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
+            {cardData.map((card, idx) => (
+              <div
+                key={idx}
+                className={`p-4 rounded-xl bg-gradient-to-b ${card.color} bg-slate-900/90 border ${card.border} shadow-lg transition-transform hover:-translate-y-0.5`}
+              >
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-xs font-semibold text-slate-300">{card.title}</span>
+                  <span className="text-base">{card.icon}</span>
+                </div>
+                <div className={`text-2xl font-black font-mono tracking-tight ${card.text}`}>
+                  {card.value}
+                </div>
+                <div className="text-[10px] text-slate-400 mt-1 font-medium">{card.sub}</div>
+              </div>
+            ))}
+          </div>
+
+          {/* Mini Track Snapshot + Real-time Critical Alerts Grid */}
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            
+            {/* Mini Railway Section Preview */}
+            <div className="lg:col-span-2 p-5 rounded-2xl bg-[#0c1220] border border-slate-800 shadow-xl space-y-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                    <span>Corridor Snapshot (Active Blocks)</span>
+                    <span className="w-2 h-2 rounded-full bg-emerald-400 pulse-glow"></span>
+                  </h3>
+                  <p className="text-xs text-slate-400">Live schematic of track occupancies and train movements</p>
+                </div>
+                <button
+                  onClick={() => setCurrentTab('section')}
+                  className="text-xs text-cyan-400 hover:text-cyan-300 font-semibold flex items-center gap-1"
+                >
+                  Full View →
+                </button>
+              </div>
+
+              {/* Simplified Mini Track Lines */}
+              <div className="p-4 bg-slate-950/80 rounded-xl border border-slate-800/80 space-y-6">
+                
+                {/* UP Mainline Mini */}
+                <div>
+                  <div className="flex justify-between text-[11px] font-mono text-slate-400 mb-1.5">
+                    <span className="text-cyan-400 font-bold">Track 1 [UP MAIN - Westbound]</span>
+                    <span>Speed: 130 km/h Limit</span>
+                  </div>
+                  <div className="h-4 bg-slate-900 rounded-full border border-slate-800 relative flex items-center px-2">
+                    <div className="absolute left-[15%] px-2 py-0.5 rounded bg-emerald-500 text-slate-950 text-[9px] font-bold shadow-md shadow-emerald-500/30 flex items-center gap-1">
+                      <span>🚆 TR-12401</span>
+                    </div>
+                    <div className="absolute left-[70%] px-2 py-0.5 rounded bg-blue-500 text-white text-[9px] font-bold shadow-md shadow-blue-500/30 flex items-center gap-1">
+                      <span>🚆 TR-12309</span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* DN Mainline Mini */}
+                <div>
+                  <div className="flex justify-between text-[11px] font-mono text-slate-400 mb-1.5">
+                    <span className="text-cyan-400 font-bold">Track 2 [DN MAIN - Eastbound]</span>
+                    <span>Speed: 130 km/h Limit</span>
+                  </div>
+                  <div className="h-4 bg-slate-900 rounded-full border border-slate-800 relative flex items-center px-2">
+                    <div className="absolute left-[35%] px-2 py-0.5 rounded bg-amber-500 text-slate-950 text-[9px] font-bold shadow-md shadow-amber-500/30 flex items-center gap-1">
+                      <span>🚆 TR-12560 (+14m)</span>
+                    </div>
+                    <div className="absolute left-[85%] px-2 py-0.5 rounded bg-blue-500 text-white text-[9px] font-bold shadow-md shadow-blue-500/30 flex items-center gap-1">
+                      <span>🚆 TR-22436</span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Loop 1 Mini */}
+                <div>
+                  <div className="flex justify-between text-[11px] font-mono text-slate-400 mb-1.5">
+                    <span className="text-amber-400 font-bold">Track 3 [LOOP 1 - Precedence Siding]</span>
+                    <span className="text-rose-400 font-bold">Signal SIG-301C: RED (Halt)</span>
+                  </div>
+                  <div className="h-4 bg-slate-900 rounded-full border border-slate-800 relative flex items-center px-2">
+                    <div className="absolute left-[50%] px-2 py-0.5 rounded bg-rose-500 text-white text-[9px] font-bold shadow-md shadow-rose-500/30 flex items-center gap-1">
+                      <span>🛑 FRT-9042 (Held)</span>
+                    </div>
+                  </div>
+                </div>
+
+              </div>
+
+              {/* Quick Status Legend */}
+              <div className="flex flex-wrap items-center gap-4 text-xs pt-1">
+                <span className="flex items-center gap-1.5">
+                  <span className="w-2.5 h-2.5 rounded-full bg-emerald-500"></span>
+                  <span className="text-slate-300 font-medium">Green = Normal</span>
+                </span>
+                <span className="flex items-center gap-1.5">
+                  <span className="w-2.5 h-2.5 rounded-full bg-amber-500"></span>
+                  <span className="text-slate-300 font-medium">Yellow = Warning</span>
+                </span>
+                <span className="flex items-center gap-1.5">
+                  <span className="w-2.5 h-2.5 rounded-full bg-rose-500"></span>
+                  <span className="text-slate-300 font-medium">Red = Critical</span>
+                </span>
+                <span className="flex items-center gap-1.5">
+                  <span className="w-2.5 h-2.5 rounded-full bg-blue-500"></span>
+                  <span className="text-slate-300 font-medium">Blue = Active</span>
+                </span>
+              </div>
+            </div>
+
+            {/* Live Alerts & Bottleneck Panel */}
+            <div className="p-5 rounded-2xl bg-[#0c1220] border border-slate-800 shadow-xl flex flex-col justify-between space-y-4">
+              <div>
+                <div className="flex items-center justify-between mb-3">
+                  <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                    <Icons.Alerts />
+                    <span>Active Section Alerts</span>
+                  </h3>
+                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-rose-500/20 text-rose-300 font-mono font-bold">
+                    {alerts.length} Registered
+                  </span>
+                </div>
+
+                <div className="space-y-2.5">
+                  {alerts.slice(0, 3).map((a) => {
+                    const badge = getStatusBadge(a.type);
+                    return (
+                      <div
+                        key={a.id}
+                        className={`p-3 rounded-xl bg-slate-900/90 border ${badge.border} transition-all hover:bg-slate-850`}
+                      >
+                        <div className="flex items-center justify-between">
+                          <span className={`text-xs font-bold ${badge.text}`}>{a.title}</span>
+                          <span className="text-[9px] text-slate-500 font-mono">{a.timestamp}</span>
+                        </div>
+                        <p className="text-[11px] text-slate-300 mt-1 leading-snug">{a.description}</p>
+                        <div className="flex items-center gap-2 mt-2 text-[10px] text-slate-400 font-mono">
+                          <span className="px-1.5 py-0.5 bg-slate-800 rounded">{a.trainId}</span>
+                          <span className="px-1.5 py-0.5 bg-slate-800 rounded">{a.trackId}</span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <button
+                onClick={() => setCurrentTab('alerts')}
+                className="w-full py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold rounded-xl border border-slate-700 text-center transition-all"
+              >
+                Open Full Alert Manager →
+              </button>
+            </div>
+
+          </div>
+
+          {/* Quick Train Fleet Table Snapshot */}
+          <div className="p-5 rounded-2xl bg-[#0c1220] border border-slate-800 shadow-xl space-y-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                  <Icons.Train />
+                  <span>Monitored Train Fleet (Top Active)</span>
+                </h3>
+                <p className="text-xs text-slate-400">Real-time status overview of priority trains in section</p>
+              </div>
+              <button
+                onClick={() => setCurrentTab('monitoring')}
+                className="text-xs text-cyan-400 hover:text-cyan-300 font-semibold"
+              >
+                View All {trains.length} Trains →
+              </button>
+            </div>
+
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs">
+                <thead>
+                  <tr className="border-b border-slate-800 text-slate-400 font-mono">
+                    <th className="pb-3 pl-2">TRAIN ID</th>
+                    <th className="pb-3">TRAIN NAME</th>
+                    <th className="pb-3">ROUTE</th>
+                    <th className="pb-3">SPEED</th>
+                    <th className="pb-3">TRACK</th>
+                    <th className="pb-3">DELAY</th>
+                    <th className="pb-3">STATUS</th>
+                    <th className="pb-3 pr-2 text-right">ACTION</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-800/60">
+                  {trains.slice(0, 5).map((train) => {
+                    const badge = getStatusBadge(train.status);
+                    return (
+                      <tr key={train.id} className="hover:bg-slate-850/60 transition-colors">
+                        <td className="py-3 pl-2 font-mono font-bold text-cyan-400">{train.id}</td>
+                        <td className="py-3 font-semibold text-white">{train.name}</td>
+                        <td className="py-3 text-slate-300">{train.source} → {train.destination}</td>
+                        <td className="py-3 font-mono font-bold text-slate-200">
+                          <span className="px-2 py-0.5 bg-slate-900 rounded border border-slate-800">
+                            {train.speed} km/h
+                          </span>
+                        </td>
+                        <td className="py-3 text-slate-400 font-mono">{train.track}</td>
+                        <td className="py-3 font-mono font-bold">
+                          <span className={train.delay === 0 ? 'text-emerald-400' : train.delay > 20 ? 'text-rose-400' : 'text-amber-400'}>
+                            {train.delay === 0 ? '0m' : `+${train.delay}m`}
+                          </span>
+                        </td>
+                        <td className="py-3">
+                          <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-bold border ${badge.bg} ${badge.text} ${badge.border}`}>
+                            <span className={`w-1.5 h-1.5 rounded-full ${badge.dot}`}></span>
+                            {train.status}
+                          </span>
+                        </td>
+                        <td className="py-3 pr-2 text-right">
+                          <button
+                            onClick={() => setSelectedTrain(train)}
+                            className="px-2.5 py-1 bg-slate-800 hover:bg-cyan-500 hover:text-slate-950 text-slate-300 rounded font-semibold text-[11px] transition-all"
+                          >
+                            Inspect
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+        </div>
+      );
+    }
+
+    // =========================================================================
+    // 4. RAILWAY SECTION VISUALIZATION (Interactive Schematic)
+    // =========================================================================
+    function RailwaySectionView({ trains, signals, setSelectedTrain }) {
+      const [hoveredNode, setHoveredNode] = useState(null);
+
+      return (
+        <div className="space-y-6">
+          <div className="p-5 rounded-2xl bg-[#0c1220] border border-slate-800 shadow-xl">
+            
+            {/* Header with Title & Legend */}
+            <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 pb-4 border-b border-slate-800">
+              <div>
+                <h2 className="text-base font-bold text-white flex items-center gap-2">
+                  <Icons.Track />
+                  <span>Railway Section Throughput Visualization</span>
+                  <span className="text-[10px] px-2 py-0.5 rounded bg-blue-500/20 text-blue-300 font-mono">
+                    INTERACTIVE SCHEMATIC
+                  </span>
+                </h2>
+                <p className="text-xs text-slate-400">
+                  Corridor Topology: Stations, Track Lines, Signals, Block Occupancies & Directional Flow
+                </p>
+              </div>
+
+              {/* Exact Colors Specified in Prompt */}
+              <div className="flex flex-wrap items-center gap-3 text-xs bg-slate-900/90 p-2.5 rounded-xl border border-slate-800">
+                <span className="text-[11px] font-bold text-slate-400 uppercase font-mono mr-1">Status Legend:</span>
+                <span className="flex items-center gap-1.5 px-2 py-0.5 rounded bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 font-bold">
+                  <span className="w-2 h-2 rounded-full bg-emerald-400"></span> Green = Normal
+                </span>
+                <span className="flex items-center gap-1.5 px-2 py-0.5 rounded bg-amber-500/10 border border-amber-500/30 text-amber-400 font-bold">
+                  <span className="w-2 h-2 rounded-full bg-amber-400"></span> Yellow = Warning
+                </span>
+                <span className="flex items-center gap-1.5 px-2 py-0.5 rounded bg-rose-500/10 border border-rose-500/30 text-rose-400 font-bold">
+                  <span className="w-2 h-2 rounded-full bg-rose-400"></span> Red = Critical
+                </span>
+                <span className="flex items-center gap-1.5 px-2 py-0.5 rounded bg-blue-500/10 border border-blue-500/30 text-blue-400 font-bold">
+                  <span className="w-2 h-2 rounded-full bg-blue-400"></span> Blue = Active
+                </span>
+              </div>
+            </div>
+
+            {/* SVG Interactive Railway Map */}
+            <div className="mt-6 bg-[#060a12] p-6 rounded-xl border border-slate-800/90 overflow-x-auto relative shadow-inner">
+              <div className="min-w-[950px] relative">
+                
+                {/* Station Markers Header */}
+                <div className="grid grid-cols-4 gap-4 mb-4 text-center font-mono">
+                  <div className="p-2 rounded-lg bg-slate-900/80 border border-slate-800">
+                    <div className="text-[10px] text-cyan-400 font-bold">STATION 01 (WEST)</div>
+                    <div className="text-xs font-bold text-white">Varanasi Cantt (BSB)</div>
+                    <div className="text-[9px] text-slate-500">KM 00.0 • PF 1-4</div>
+                  </div>
+                  <div className="p-2 rounded-lg bg-slate-900/80 border border-slate-800">
+                    <div className="text-[10px] text-cyan-400 font-bold">STATION 02 (JUNCTION)</div>
+                    <div className="text-xs font-bold text-white">Central Junction Cabin</div>
+                    <div className="text-[9px] text-slate-500">KM 14.5 • Switches & Loops</div>
+                  </div>
+                  <div className="p-2 rounded-lg bg-slate-900/80 border border-slate-800">
+                    <div className="text-[10px] text-cyan-400 font-bold">STATION 03 (HALT)</div>
+                    <div className="text-xs font-bold text-white">Riverside Sector Halt</div>
+                    <div className="text-[9px] text-slate-500">KM 22.0 • Auto-Signals</div>
+                  </div>
+                  <div className="p-2 rounded-lg bg-slate-900/80 border border-slate-800">
+                    <div className="text-[10px] text-cyan-400 font-bold">STATION 04 (EAST YARD)</div>
+                    <div className="text-xs font-bold text-white">East Freight Terminal</div>
+                    <div className="text-[9px] text-slate-500">KM 32.0 • Siding & Yard</div>
+                  </div>
+                </div>
+
+                {/* SVG Schematic Canvas */}
+                <svg className="w-full h-80 select-none" viewBox="0 0 950 320">
+                  <defs>
+                    <linearGradient id="upLineGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+                      <stop offset="0%" stopColor="#38bdf8" stopOpacity="0.8"/>
+                      <stop offset="100%" stopColor="#3b82f6" stopOpacity="0.8"/>
+                    </linearGradient>
+                    <linearGradient id="dnLineGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+                      <stop offset="0%" stopColor="#6366f1" stopOpacity="0.8"/>
+                      <stop offset="100%" stopColor="#a855f7" stopOpacity="0.8"/>
+                    </linearGradient>
+                  </defs>
+
+                  {/* Grid Lines Background */}
+                  <g stroke="#1e293b" strokeWidth="1" strokeDasharray="3,6" opacity="0.6">
+                    <line x1="237" y1="20" x2="237" y2="300" />
+                    <line x1="475" y1="20" x2="475" y2="300" />
+                    <line x1="712" y1="20" x2="712" y2="300" />
+                  </g>
+
+                  {/* TRACK 1: UP MAIN LINE (Westbound) */}
+                  <g>
+                    <line x1="50" y1="80" x2="900" y2="80" stroke="#334155" strokeWidth="6" strokeLinecap="round" />
+                    <line x1="50" y1="80" x2="900" y2="80" stroke="url(#upLineGrad)" strokeWidth="3" strokeLinecap="round" />
+                    <text x="55" y="70" fill="#38bdf8" fontSize="10" fontFamily="JetBrains Mono" fontWeight="bold">
+                      TRACK 1: UP MAIN LINE ◄ (Westbound Direction)
+                    </text>
+                  </g>
+
+                  {/* TRACK 2: DN MAIN LINE (Eastbound) */}
+                  <g>
+                    <line x1="50" y1="160" x2="900" y2="160" stroke="#334155" strokeWidth="6" strokeLinecap="round" />
+                    <line x1="50" y1="160" x2="900" y2="160" stroke="url(#dnLineGrad)" strokeWidth="3" strokeLinecap="round" />
+                    <text x="55" y="150" fill="#a855f7" fontSize="10" fontFamily="JetBrains Mono" fontWeight="bold">
+                      TRACK 2: DN MAIN LINE ► (Eastbound Direction)
+                    </text>
+                  </g>
+
+                  {/* TRACK 3: LOOP LINE 1 (North Siding) */}
+                  <g>
+                    <path d="M 280 80 Q 320 30 360 30 L 600 30 Q 640 30 680 80" fill="none" stroke="#eab308" strokeWidth="2.5" strokeDasharray="5,3" />
+                    <text x="380" y="24" fill="#eab308" fontSize="9" fontFamily="JetBrains Mono" fontWeight="bold">
+                      TRACK 3: LOOP LINE 1 (Precedence Siding)
+                    </text>
+                  </g>
+
+                  {/* TRACK 4: LOOP LINE 2 (South Siding) */}
+                  <g>
+                    <path d="M 300 160 Q 340 220 380 220 L 580 220 Q 620 220 660 160" fill="none" stroke="#f43f5e" strokeWidth="2.5" strokeDasharray="5,3" />
+                    <text x="390" y="235" fill="#f43f5e" fontSize="9" fontFamily="JetBrains Mono" fontWeight="bold">
+                      TRACK 4: LOOP LINE 2 (Holding Siding)
+                    </text>
+                  </g>
+
+                  {/* TRACK 5 & 6: CROSSOVERS & SPURS */}
+                  <g>
+                    <line x1="200" y1="80" x2="260" y2="160" stroke="#64748b" strokeWidth="2" strokeDasharray="4,2" />
+                    <line x1="720" y1="160" x2="780" y2="80" stroke="#64748b" strokeWidth="2" strokeDasharray="4,2" />
+                    
+                    <path d="M 680 160 Q 720 270 760 270 L 900 270" fill="none" stroke="#0ea5e9" strokeWidth="2" />
+                    <text x="770" y="285" fill="#0ea5e9" fontSize="9" fontFamily="JetBrains Mono">
+                      TRACK 7: East Yard Shunting Lead
+                    </text>
+                  </g>
+
+                  {/* SIGNALS */}
+                  <g transform="translate(180, 52)">
+                    <rect x="0" y="0" width="12" height="24" rx="3" fill="#0f172a" stroke="#10b981" strokeWidth="1.5" />
+                    <circle cx="6" cy="6" r="3" fill="#10b981" />
+                    <circle cx="6" cy="18" r="2.5" fill="#334155" />
+                    <text x="16" y="16" fill="#10b981" fontSize="8" fontFamily="JetBrains Mono">SIG-101A [GRN]</text>
+                  </g>
+
+                  <g transform="translate(180, 168)">
+                    <rect x="0" y="0" width="12" height="24" rx="3" fill="#0f172a" stroke="#10b981" strokeWidth="1.5" />
+                    <circle cx="6" cy="6" r="3" fill="#10b981" />
+                    <circle cx="6" cy="18" r="2.5" fill="#334155" />
+                    <text x="16" y="16" fill="#10b981" fontSize="8" fontFamily="JetBrains Mono">SIG-201A [GRN]</text>
+                  </g>
+
+                  <g transform="translate(620, 10)">
+                    <rect x="0" y="0" width="12" height="24" rx="3" fill="#0f172a" stroke="#ef4444" strokeWidth="1.5" />
+                    <circle cx="6" cy="6" r="3" fill="#ef4444" />
+                    <circle cx="6" cy="18" r="2.5" fill="#334155" />
+                    <text x="16" y="16" fill="#ef4444" fontSize="8" fontFamily="JetBrains Mono">SIG-301C [RED]</text>
+                  </g>
+
+                  <g transform="translate(500, 168)">
+                    <rect x="0" y="0" width="12" height="24" rx="3" fill="#0f172a" stroke="#f59e0b" strokeWidth="1.5" />
+                    <circle cx="6" cy="6" r="2.5" fill="#334155" />
+                    <circle cx="6" cy="18" r="3" fill="#f59e0b" />
+                    <text x="16" y="16" fill="#f59e0b" fontSize="8" fontFamily="JetBrains Mono">SIG-203B [YEL]</text>
+                  </g>
+
+                  {/* TRAIN NODES */}
+                  {/* Train 1: Vande Bharat UP (Green = Normal) */}
+                  <g
+                    transform="translate(110, 62)"
+                    className="cursor-pointer"
+                    onClick={() => setSelectedTrain(trains[0])}
+                    onMouseEnter={() => setHoveredNode(trains[0])}
+                    onMouseLeave={() => setHoveredNode(null)}
+                  >
+                    <rect x="0" y="0" width="110" height="34" rx="8" fill="#064e3b" stroke="#10b981" strokeWidth="2" />
+                    <text x="8" y="15" fill="#a7f3d0" fontSize="9" fontWeight="bold">🚆 TR-12401</text>
+                    <text x="8" y="27" fill="#ecfdf5" fontSize="8" fontFamily="JetBrains Mono">130 km/h ◄ (Normal)</text>
+                    <circle cx="100" cy="17" r="4" fill="#10b981" />
+                  </g>
+
+                  {/* Train 2: Rajdhani UP (Blue = Active) */}
+                  <g
+                    transform="translate(480, 62)"
+                    className="cursor-pointer"
+                    onClick={() => setSelectedTrain(trains[1])}
+                    onMouseEnter={() => setHoveredNode(trains[1])}
+                    onMouseLeave={() => setHoveredNode(null)}
+                  >
+                    <rect x="0" y="0" width="115" height="34" rx="8" fill="#1e3a8a" stroke="#3b82f6" strokeWidth="2" />
+                    <text x="8" y="15" fill="#bfdbfe" fontSize="9" fontWeight="bold">🚆 TR-12309</text>
+                    <text x="8" y="27" fill="#ffffff" fontSize="8" fontFamily="JetBrains Mono">115 km/h ◄ (Active)</text>
+                    <circle cx="105" cy="17" r="4" fill="#3b82f6" />
+                  </g>
+
+                  {/* Train 3: Shiv Ganga DN (Yellow = Warning) */}
+                  <g
+                    transform="translate(320, 142)"
+                    className="cursor-pointer"
+                    onClick={() => setSelectedTrain(trains[2])}
+                    onMouseEnter={() => setHoveredNode(trains[2])}
+                    onMouseLeave={() => setHoveredNode(null)}
+                  >
+                    <rect x="0" y="0" width="115" height="34" rx="8" fill="#78350f" stroke="#f59e0b" strokeWidth="2" />
+                    <text x="8" y="15" fill="#fde68a" fontSize="9" fontWeight="bold">🚆 TR-12560</text>
+                    <text x="8" y="27" fill="#ffffff" fontSize="8" fontFamily="JetBrains Mono">95 km/h ► (+14m)</text>
+                    <circle cx="105" cy="17" r="4" fill="#f59e0b" />
+                  </g>
+
+                  {/* Train 4: Freight Liner on Loop 1 (Red = Critical) */}
+                  <g
+                    transform="translate(430, 12)"
+                    className="cursor-pointer"
+                    onClick={() => setSelectedTrain(trains[3])}
+                    onMouseEnter={() => setHoveredNode(trains[3])}
+                    onMouseLeave={() => setHoveredNode(null)}
+                  >
+                    <rect x="0" y="0" width="120" height="34" rx="8" fill="#881337" stroke="#ef4444" strokeWidth="2" />
+                    <text x="8" y="15" fill="#fecdd3" fontSize="9" fontWeight="bold">🛑 FRT-9042</text>
+                    <text x="8" y="27" fill="#ffffff" fontSize="8" fontFamily="JetBrains Mono">0 km/h [HELD]</text>
+                    <circle cx="110" cy="17" r="4" fill="#ef4444" />
+                  </g>
+
+                  {/* Train 5: Vande Bharat DN Inbound (Blue = Active) */}
+                  <g
+                    transform="translate(730, 142)"
+                    className="cursor-pointer"
+                    onClick={() => setSelectedTrain(trains[6])}
+                    onMouseEnter={() => setHoveredNode(trains[6])}
+                    onMouseLeave={() => setHoveredNode(null)}
+                  >
+                    <rect x="0" y="0" width="115" height="34" rx="8" fill="#1e3a8a" stroke="#3b82f6" strokeWidth="2" />
+                    <text x="8" y="15" fill="#bfdbfe" fontSize="9" fontWeight="bold">🚆 TR-22436</text>
+                    <text x="8" y="27" fill="#ffffff" fontSize="8" fontFamily="JetBrains Mono">125 km/h ► (Active)</text>
+                    <circle cx="105" cy="17" r="4" fill="#3b82f6" />
+                  </g>
+
+                  {/* Train 6: Inspection Loco */}
+                  <g
+                    transform="translate(770, 252)"
+                    className="cursor-pointer"
+                    onClick={() => setSelectedTrain(trains[7])}
+                    onMouseEnter={() => setHoveredNode(trains[7])}
+                    onMouseLeave={() => setHoveredNode(null)}
+                  >
+                    <rect x="0" y="0" width="110" height="32" rx="6" fill="#1e293b" stroke="#0ea5e9" strokeWidth="1.5" />
+                    <text x="8" y="14" fill="#7dd3fc" fontSize="8" fontWeight="bold">🔧 LOC-0044</text>
+                    <text x="8" y="25" fill="#e2e8f0" fontSize="8" fontFamily="JetBrains Mono">Inspection Spur</text>
+                  </g>
+                </svg>
+              </div>
+
+              <div className="mt-4 p-3 bg-slate-900/90 rounded-lg border border-slate-800 flex items-center justify-between text-xs">
+                <div className="flex items-center gap-2">
+                  <span className="text-cyan-400 font-bold">💡 Interactivity:</span>
+                  <span className="text-slate-300">
+                    Click any train block on the railway schematic to inspect speed telemetry, safe headway margins, and track block assignments.
+                  </span>
+                </div>
+                {hoveredNode && (
+                  <span className="text-emerald-400 font-mono font-semibold">
+                    Target: {hoveredNode.name} ({hoveredNode.id})
+                  </span>
+                )}
+              </div>
+
+            </div>
+
+          </div>
+        </div>
+      );
+    }
+
+    // =========================================================================
+    // 5. TRAIN MONITORING TABLE VIEW
+    // =========================================================================
+    function TrainMonitoringView({ trains, searchQuery, setSelectedTrain }) {
+      const [filterCategory, setFilterCategory] = useState('All');
+
+      const filteredTrains = useMemo(() => {
+        return trains.filter(t => {
+          const matchSearch = t.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                              t.id.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                              t.track.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                              t.source.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                              t.destination.toLowerCase().includes(searchQuery.toLowerCase());
+          const matchCat = filterCategory === 'All' || t.category.includes(filterCategory);
+          return matchSearch && matchCat;
+        });
+      }, [trains, searchQuery, filterCategory]);
+
+      return (
+        <div className="space-y-6">
+          <div className="p-5 rounded-2xl bg-[#0c1220] border border-slate-800 shadow-xl space-y-4">
+            
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+              <div>
+                <h2 className="text-base font-bold text-white flex items-center gap-2">
+                  <Icons.Train />
+                  <span>Real-Time Train Monitoring Dashboard</span>
+                  <span className="text-[10px] px-2 py-0.5 rounded bg-cyan-500/20 text-cyan-300 font-mono">
+                    {filteredTrains.length} TRAINS ACTIVE
+                  </span>
+                </h2>
+                <p className="text-xs text-slate-400">Live monitoring of speeds, tracks, route schedules, and delay variances</p>
+              </div>
+
+              <div className="flex items-center gap-2">
+                {['All', 'Superfast', 'Express', 'Freight', 'Inspection'].map(cat => (
+                  <button
+                    key={cat}
+                    onClick={() => setFilterCategory(cat)}
+                    className={`px-3 py-1 rounded-lg text-xs font-semibold transition-all ${
+                      filterCategory === cat
+                        ? 'bg-cyan-500 text-slate-950 shadow-md shadow-cyan-500/20'
+                        : 'bg-slate-900 text-slate-400 hover:text-slate-200 border border-slate-800'
+                    }`}
+                  >
+                    {cat}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="overflow-x-auto rounded-xl border border-slate-800/90">
+              <table className="w-full text-left text-xs bg-[#090e1a]">
+                <thead>
+                  <tr className="border-b border-slate-800 bg-slate-900/90 text-slate-400 font-mono">
+                    <th className="py-3.5 pl-4">TRAIN ID</th>
+                    <th className="py-3.5 px-3">TRAIN NAME</th>
+                    <th className="py-3.5 px-3">SOURCE</th>
+                    <th className="py-3.5 px-3">DESTINATION</th>
+                    <th className="py-3.5 px-3">SPEED</th>
+                    <th className="py-3.5 px-3">TRACK</th>
+                    <th className="py-3.5 px-3">DELAY</th>
+                    <th className="py-3.5 px-3">STATUS</th>
+                    <th className="py-3.5 pr-4 text-right">ACTION</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-800/60">
+                  {filteredTrains.map((train) => {
+                    const badge = getStatusBadge(train.status);
+                    return (
+                      <tr key={train.id} className="hover:bg-slate-800/40 transition-colors">
+                        <td className="py-3 pl-4 font-mono font-bold text-cyan-400">
+                          <span className="px-2 py-1 bg-slate-900 rounded border border-slate-800">
+                            {train.id}
+                          </span>
+                        </td>
+                        <td className="py-3 px-3">
+                          <div className="font-semibold text-white">{train.name}</div>
+                          <div className="text-[10px] text-slate-500 font-mono">{train.category} • Priority: {train.priority}</div>
+                        </td>
+                        <td className="py-3 px-3 text-slate-300">{train.source}</td>
+                        <td className="py-3 px-3 text-slate-300">{train.destination}</td>
+                        <td className="py-3 px-3 font-mono">
+                          <div className="flex items-center gap-2">
+                            <span className="font-bold text-slate-100">{train.speed} km/h</span>
+                            <div className="w-16 h-1.5 bg-slate-800 rounded-full overflow-hidden">
+                              <div
+                                className="h-full bg-cyan-400"
+                                style={{ width: `${Math.min(100, (train.speed / train.maxSpeed) * 100)}%` }}
+                              ></div>
+                            </div>
+                          </div>
+                        </td>
+                        <td className="py-3 px-3 font-mono text-cyan-300">{train.track}</td>
+                        <td className="py-3 px-3 font-mono font-bold">
+                          <span className={train.delay === 0 ? 'text-emerald-400' : train.delay > 20 ? 'text-rose-400' : 'text-amber-400'}>
+                            {train.delay === 0 ? 'ON TIME' : `+${train.delay} min`}
+                          </span>
+                        </td>
+                        <td className="py-3 px-3">
+                          <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold border ${badge.bg} ${badge.text} ${badge.border}`}>
+                            <span className={`w-1.5 h-1.5 rounded-full ${badge.dot}`}></span>
+                            {train.status}
+                          </span>
+                        </td>
+                        <td className="py-3 pr-4 text-right">
+                          <button
+                            onClick={() => setSelectedTrain(train)}
+                            className="px-3 py-1.5 bg-cyan-500/10 hover:bg-cyan-500 hover:text-slate-950 text-cyan-400 border border-cyan-500/30 rounded-lg text-xs font-semibold transition-all"
+                          >
+                            Details
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+
+          </div>
+        </div>
+      );
+    }
+
+    // =========================================================================
+    // 6. TRACK STATUS VIEW
+    // =========================================================================
+    function TrackStatusView({ tracks }) {
+      return (
+        <div className="space-y-6">
+          <div className="p-5 rounded-2xl bg-[#0c1220] border border-slate-800 shadow-xl space-y-4">
+            
+            <div className="flex items-center justify-between">
+              <div>
+                <h2 className="text-base font-bold text-white flex items-center gap-2">
+                  <Icons.Track />
+                  <span>Railway Track Section Status & Block Capacity</span>
+                  <span className="text-[10px] px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 font-mono">
+                    8 BLOCKS MONITORED
+                  </span>
+                </h2>
+                <p className="text-xs text-slate-400">Track occupancy states, switch positions, and line capacity load</p>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+              {tracks.map((trk) => {
+                const badge = getStatusBadge(trk.health);
+                return (
+                  <div
+                    key={trk.id}
+                    className={`p-4 rounded-xl bg-slate-900/90 border ${badge.border} shadow-lg space-y-3 relative overflow-hidden`}
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className="px-2 py-0.5 rounded bg-slate-800 text-cyan-400 font-mono font-bold text-xs border border-slate-700">
+                        {trk.id}
+                      </span>
+                      <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${badge.bg} ${badge.text} ${badge.border}`}>
+                        {trk.occupied ? 'OCCUPIED' : 'AVAILABLE'}
+                      </span>
+                    </div>
+
+                    <div>
+                      <h4 className="text-xs font-bold text-white leading-snug">{trk.name}</h4>
+                      <p className="text-[11px] text-slate-400 mt-0.5 font-mono">Length: {trk.lengthKm} KM • Limit: {trk.speedLimit} km/h</p>
+                    </div>
+
+                    <div className="p-2.5 rounded-lg bg-slate-950/80 border border-slate-800 space-y-1 text-xs">
+                      <div className="flex justify-between text-slate-400">
+                        <span>Current Train:</span>
+                        <span className="text-slate-200 font-mono font-semibold">{trk.currentTrain}</span>
+                      </div>
+                      <div className="flex justify-between text-slate-400">
+                        <span>Interlocking:</span>
+                        <span className="text-slate-300 font-mono text-[10px]">{trk.interlocking}</span>
+                      </div>
+                    </div>
+
+                    <div>
+                      <div className="flex justify-between text-[10px] font-mono text-slate-400 mb-1">
+                        <span>Section Load Utilization</span>
+                        <span className="text-white font-bold">{trk.utilization}%</span>
+                      </div>
+                      <div className="h-1.5 bg-slate-800 rounded-full overflow-hidden">
+                        <div
+                          className={`h-full ${trk.utilization > 90 ? 'bg-rose-500' : trk.utilization > 75 ? 'bg-amber-500' : 'bg-emerald-500'}`}
+                          style={{ width: `${trk.utilization}%` }}
+                        ></div>
+                      </div>
+                    </div>
+
+                    <div className="text-[10px] text-slate-400 font-mono pt-1 border-t border-slate-800 flex justify-between">
+                      <span>Status:</span>
+                      <span className={badge.text}>{trk.status}</span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+          </div>
+        </div>
+      );
+    }
+
+    // =========================================================================
+    // 7. SIGNAL STATUS VIEW
+    // =========================================================================
+    function SignalStatusView({ signals }) {
+      return (
+        <div className="space-y-6">
+          <div className="p-5 rounded-2xl bg-[#0c1220] border border-slate-800 shadow-xl space-y-4">
+            
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+              <div>
+                <h2 className="text-base font-bold text-white flex items-center gap-2">
+                  <Icons.Signal />
+                  <span>Railway Signal Interlocking & Aspect Status</span>
+                  <span className="text-[10px] px-2 py-0.5 rounded bg-purple-500/20 text-purple-300 font-mono">
+                    SOLID STATE INTERLOCKING (SSI)
+                  </span>
+                </h2>
+                <p className="text-xs text-slate-400">
+                  3-Aspect & 4-Aspect automated signaling status across active line sections
+                </p>
+              </div>
+
+              <div className="flex items-center gap-3 text-xs bg-slate-900 p-2 rounded-xl border border-slate-800">
+                <span className="flex items-center gap-1 text-emerald-400 font-bold">● GREEN: Clear</span>
+                <span className="flex items-center gap-1 text-amber-400 font-bold">● YELLOW: Caution</span>
+                <span className="flex items-center gap-1 text-rose-400 font-bold">● RED: Stop/Danger</span>
+              </div>
+            </div>
+
+            <div className="overflow-x-auto rounded-xl border border-slate-800/90">
+              <table className="w-full text-left text-xs bg-[#090e1a]">
+                <thead>
+                  <tr className="border-b border-slate-800 bg-slate-900/90 text-slate-400 font-mono">
+                    <th className="py-3.5 pl-4">SIGNAL ID</th>
+                    <th className="py-3.5 px-3">LOCATION</th>
+                    <th className="py-3.5 px-3 text-center">SIGNAL STATUS (ASPECT)</th>
+                    <th className="py-3.5 px-3">TRACK</th>
+                    <th className="py-3.5 px-3">TRAIN IN SECTION</th>
+                    <th className="py-3.5 pr-4">INTERLOCKING MODE</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-800/60">
+                  {signals.map((sig) => {
+                    const isGreen = sig.status === 'GREEN';
+                    const isYellow = sig.status === 'YELLOW';
+                    const isRed = sig.status === 'RED';
+
+                    return (
+                      <tr key={sig.id} className="hover:bg-slate-800/40 transition-colors">
+                        <td className="py-3 pl-4 font-mono font-bold text-cyan-400">{sig.id}</td>
+                        <td className="py-3 px-3 text-slate-200 font-medium">{sig.location}</td>
+                        <td className="py-3 px-3">
+                          <div className="flex items-center justify-center gap-2">
+                            <div className="w-6 h-12 bg-black rounded-full border border-slate-700 flex flex-col items-center justify-around py-1 shadow-md">
+                              <span className={`w-2.5 h-2.5 rounded-full ${isRed ? 'bg-rose-500 shadow-md shadow-rose-500/80' : 'bg-slate-800'}`}></span>
+                              <span className={`w-2.5 h-2.5 rounded-full ${isYellow ? 'bg-amber-400 shadow-md shadow-amber-400/80' : 'bg-slate-800'}`}></span>
+                              <span className={`w-2.5 h-2.5 rounded-full ${isGreen ? 'bg-emerald-400 shadow-md shadow-emerald-400/80' : 'bg-slate-800'}`}></span>
+                            </div>
+                            <span className={`font-mono font-bold text-xs ${isGreen ? 'text-emerald-400' : isYellow ? 'text-amber-400' : 'text-rose-400'}`}>
+                              {sig.status}
+                            </span>
+                          </div>
+                        </td>
+                        <td className="py-3 px-3 text-slate-300 font-mono">{sig.track}</td>
+                        <td className="py-3 px-3 font-semibold text-white">{sig.train}</td>
+                        <td className="py-3 pr-4 text-slate-400 font-mono text-[11px]">{sig.interlocking}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+
+          </div>
+        </div>
+      );
+    }
+
+    // =========================================================================
+    // 8. TRAIN SCHEDULE VIEW
+    // =========================================================================
+    function TrainScheduleView({ schedule }) {
+      return (
+        <div className="space-y-6">
+          <div className="p-5 rounded-2xl bg-[#0c1220] border border-slate-800 shadow-xl space-y-4">
+            
+            <div className="flex items-center justify-between">
+              <div>
+                <h2 className="text-base font-bold text-white flex items-center gap-2">
+                  <Icons.Schedule />
+                  <span>Central Train Schedule & Platform Timetable</span>
+                  <span className="text-[10px] px-2 py-0.5 rounded bg-blue-500/20 text-blue-300 font-mono">
+                    TODAY'S DISPATCH
+                  </span>
+                </h2>
+                <p className="text-xs text-slate-400">Timetable slots, arrival/departure margins, and platform routing</p>
+              </div>
+            </div>
+
+            <div className="overflow-x-auto rounded-xl border border-slate-800/90">
+              <table className="w-full text-left text-xs bg-[#090e1a]">
+                <thead>
+                  <tr className="border-b border-slate-800 bg-slate-900/90 text-slate-400 font-mono">
+                    <th className="py-3.5 pl-4">TRAIN ID</th>
+                    <th className="py-3.5 px-3">TRAIN NAME</th>
+                    <th className="py-3.5 px-3">ARRIVAL</th>
+                    <th className="py-3.5 px-3">DEPARTURE</th>
+                    <th className="py-3.5 px-3">PLATFORM</th>
+                    <th className="py-3.5 px-3">DELAY</th>
+                    <th className="py-3.5 pr-4">OPERATIONAL STATUS</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-800/60">
+                  {schedule.map((item, idx) => {
+                    const badge = getStatusBadge(item.status);
+                    return (
+                      <tr key={idx} className="hover:bg-slate-800/40 transition-colors">
+                        <td className="py-3.5 pl-4 font-mono font-bold text-cyan-400">{item.trainId}</td>
+                        <td className="py-3.5 px-3 font-semibold text-white">{item.trainName}</td>
+                        <td className="py-3.5 px-3 font-mono text-slate-200">{item.arrival}</td>
+                        <td className="py-3.5 px-3 font-mono text-slate-200">{item.departure}</td>
+                        <td className="py-3.5 px-3">
+                          <span className="px-2 py-0.5 rounded bg-slate-800 border border-slate-700 text-cyan-300 font-mono font-bold text-[11px]">
+                            {item.platform}
+                          </span>
+                        </td>
+                        <td className="py-3.5 px-3 font-mono font-bold">
+                          <span className={item.delay === '+0 min' ? 'text-emerald-400' : 'text-amber-400'}>
+                            {item.delay}
+                          </span>
+                        </td>
+                        <td className="py-3.5 pr-4">
+                          <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold border ${badge.bg} ${badge.text} ${badge.border}`}>
+                            <span className={`w-1.5 h-1.5 rounded-full ${badge.dot}`}></span>
+                            {item.status}
+                          </span>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+
+          </div>
+        </div>
+      );
+    }
+
+    // =========================================================================
+    // 9. TRAFFIC CONTROL & OPTIMIZATION VIEW
+    // =========================================================================
+    function TrafficControlView({ traffic }) {
+      return (
+        <div className="space-y-6">
+          
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
+            
+            <div className="p-4 rounded-xl bg-slate-900/90 border border-cyan-500/30 shadow-lg">
+              <div className="text-xs text-slate-400 font-medium">Traffic Density</div>
+              <div className="text-2xl font-black font-mono text-cyan-400 mt-1">{traffic.densityPct}%</div>
+              <div className="text-[10px] text-slate-500 mt-1">Optimal Section Capacity</div>
+            </div>
+
+            <div className="p-4 rounded-xl bg-slate-900/90 border border-purple-500/30 shadow-lg">
+              <div className="text-xs text-slate-400 font-medium">Track Utilization</div>
+              <div className="text-2xl font-black font-mono text-purple-400 mt-1">{traffic.utilizationPct}%</div>
+              <div className="text-[10px] text-slate-500 mt-1">Active corridor load</div>
+            </div>
+
+            <div className="p-4 rounded-xl bg-slate-900/90 border border-amber-500/30 shadow-lg">
+              <div className="text-xs text-slate-400 font-medium">Average Delay</div>
+              <div className="text-2xl font-black font-mono text-amber-400 mt-1">{traffic.avgDelayMin}m</div>
+              <div className="text-[10px] text-slate-500 mt-1">Target: &lt; 5.0m</div>
+            </div>
+
+            <div className="p-4 rounded-xl bg-slate-900/90 border border-emerald-500/30 shadow-lg">
+              <div className="text-xs text-slate-400 font-medium">Safe Headway</div>
+              <div className="text-2xl font-black font-mono text-emerald-400 mt-1">{traffic.headwayMin}m</div>
+              <div className="text-[10px] text-slate-500 mt-1">Spacing between trains</div>
+            </div>
+
+            <div className="p-4 rounded-xl bg-slate-900/90 border border-blue-500/30 shadow-lg">
+              <div className="text-xs text-slate-400 font-medium">Congestion Level</div>
+              <div className="text-2xl font-black font-mono text-blue-400 mt-1">{traffic.congestionLevel}</div>
+              <div className="text-[10px] text-slate-500 mt-1">Section flow index</div>
+            </div>
+
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            
+            <div className="p-5 rounded-2xl bg-[#0c1220] border border-slate-800 shadow-xl space-y-4">
+              <div className="flex items-center justify-between">
+                <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                  <Icons.Traffic />
+                  <span>Section Bottleneck Resolutions</span>
+                </h3>
+                <span className="text-[10px] px-2 py-0.5 rounded bg-rose-500/20 text-rose-300 font-mono">
+                  {traffic.bottlenecks.length} DETECTED
+                </span>
+              </div>
+
+              <div className="space-y-3">
+                {traffic.bottlenecks.map((b, idx) => (
+                  <div key={idx} className="p-4 rounded-xl bg-slate-900/90 border border-slate-800 space-y-2">
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="font-bold text-cyan-400">{b.section}</span>
+                      <span className="text-[10px] text-rose-400 font-mono font-bold">HIGH PRIORITY</span>
+                    </div>
+                    <p className="text-xs text-slate-300">
+                      <strong className="text-slate-400">Root Cause:</strong> {b.cause}
+                    </p>
+                    <p className="text-xs text-slate-400">
+                      <strong className="text-slate-400">Section Impact:</strong> {b.impact}
+                    </p>
+                    <div className="p-2.5 rounded-lg bg-cyan-950/40 border border-cyan-800/40 text-xs text-cyan-200">
+                      <span className="font-bold text-cyan-300">Throughput Optimization: </span>
+                      {b.recommendedAction}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="p-5 rounded-2xl bg-[#0c1220] border border-slate-800 shadow-xl space-y-4">
+              <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                <Icons.Performance />
+                <span>Section Optimization Insights (Throughput Multipliers)</span>
+              </h3>
+
+              <div className="space-y-3">
+                {traffic.optimizationTips.map((tip, idx) => (
+                  <div key={idx} className="p-3.5 rounded-xl bg-slate-900/80 border border-slate-800 flex items-start gap-3">
+                    <span className="w-5 h-5 rounded-full bg-emerald-500/20 text-emerald-400 flex items-center justify-center font-bold text-xs shrink-0 mt-0.5">
+                      ✓
+                    </span>
+                    <p className="text-xs text-slate-300 leading-relaxed">{tip}</p>
+                  </div>
+                ))}
+              </div>
+
+              <div className="p-4 rounded-xl bg-gradient-to-r from-blue-950/40 to-indigo-950/40 border border-blue-800/40 text-xs text-blue-200">
+                <div className="font-bold text-blue-300 mb-1">Theoretical Maximum Throughput: 24 Trains / Hour</div>
+                <div>Current Section Rate: <strong>18.6 Trains / Hour</strong>. Optimization headroom remaining: <strong>+22.5%</strong>.</div>
+              </div>
+            </div>
+
+          </div>
+
+        </div>
+      );
+    }
+
+    // =========================================================================
+    // 10. PERFORMANCE ANALYTICS (SVG Charts)
+    // =========================================================================
+    function PerformanceView({ performance }) {
+      const { throughputHourly, delayBySection, trackUtilization, waitingTimeBreakdown } = performance;
+
+      return (
+        <div className="space-y-6">
+          
+          <div className="p-5 rounded-2xl bg-[#0c1220] border border-slate-800 shadow-xl space-y-2">
+            <h2 className="text-base font-bold text-white flex items-center gap-2">
+              <Icons.Performance />
+              <span>Section Performance & Historical Throughput Analytics</span>
+            </h2>
+            <p className="text-xs text-slate-400">Quantitative charts illustrating throughput curves, delay distributions, and track loads</p>
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            
+            {/* Chart 1: Hourly Train Throughput */}
+            <div className="p-5 rounded-2xl bg-[#0c1220] border border-slate-800 shadow-xl space-y-4">
+              <div className="flex items-center justify-between">
+                <h4 className="text-xs font-bold text-white uppercase tracking-wider font-mono">1. Train Throughput (Trains/Hour)</h4>
+                <span className="text-[10px] text-cyan-400 font-mono">Peak: 22 at 14:00</span>
+              </div>
+
+              <div className="h-52 flex items-end justify-between gap-2 pt-8 pb-2 px-2 bg-slate-950/60 rounded-xl border border-slate-800">
+                {throughputHourly.map((item, idx) => {
+                  const heightPct = (item.trains / 25) * 100;
+                  return (
+                    <div key={idx} className="flex-1 flex flex-col items-center gap-2 h-full justify-end group">
+                      <span className="text-[10px] font-mono text-cyan-400 opacity-0 group-hover:opacity-100 transition-opacity font-bold">
+                        {item.trains}
+                      </span>
+                      <div
+                        className="w-full bg-gradient-to-t from-cyan-600 to-cyan-400 rounded-t-md transition-all group-hover:from-cyan-500 group-hover:to-cyan-300"
+                        style={{ height: `${heightPct}%` }}
+                      ></div>
+                      <span className="text-[9px] font-mono text-slate-400">{item.hour}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Chart 2: Average Delay by Section */}
+            <div className="p-5 rounded-2xl bg-[#0c1220] border border-slate-800 shadow-xl space-y-4">
+              <div className="flex items-center justify-between">
+                <h4 className="text-xs font-bold text-white uppercase tracking-wider font-mono">2. Average Delay by Sub-Corridor (Minutes)</h4>
+                <span className="text-[10px] text-amber-400 font-mono">Max: North Loop (14.2m)</span>
+              </div>
+
+              <div className="space-y-3 pt-2">
+                {delayBySection.map((sec, idx) => (
+                  <div key={idx} className="space-y-1">
+                    <div className="flex justify-between text-xs">
+                      <span className="text-slate-300 font-medium">{sec.section}</span>
+                      <span className="text-amber-400 font-mono font-bold">{sec.delay} min</span>
+                    </div>
+                    <div className="h-2 bg-slate-900 rounded-full overflow-hidden">
+                      <div
+                        className="h-full bg-gradient-to-r from-amber-500 to-rose-500 rounded-full"
+                        style={{ width: `${(sec.delay / 20) * 100}%` }}
+                      ></div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Chart 3: Track Block Utilization */}
+            <div className="p-5 rounded-2xl bg-[#0c1220] border border-slate-800 shadow-xl space-y-4">
+              <div className="flex items-center justify-between">
+                <h4 className="text-xs font-bold text-white uppercase tracking-wider font-mono">3. Track Block Utilization (%)</h4>
+                <span className="text-[10px] text-purple-400 font-mono">Avg: 81.8%</span>
+              </div>
+
+              <div className="space-y-3 pt-2">
+                {trackUtilization.map((trk, idx) => (
+                  <div key={idx} className="space-y-1">
+                    <div className="flex justify-between text-xs">
+                      <span className="text-slate-300 font-mono">{trk.track}</span>
+                      <span className="text-purple-400 font-mono font-bold">{trk.util}%</span>
+                    </div>
+                    <div className="h-2 bg-slate-900 rounded-full overflow-hidden">
+                      <div
+                        className="h-full bg-gradient-to-r from-blue-500 to-purple-500 rounded-full"
+                        style={{ width: `${trk.util}%` }}
+                      ></div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Chart 4: Waiting & Dwell Time Breakdown */}
+            <div className="p-5 rounded-2xl bg-[#0c1220] border border-slate-800 shadow-xl space-y-4">
+              <div className="flex items-center justify-between">
+                <h4 className="text-xs font-bold text-white uppercase tracking-wider font-mono">4. Waiting Time Distribution</h4>
+                <span className="text-[10px] text-emerald-400 font-mono">Total Trains: 24</span>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3 pt-2">
+                {waitingTimeBreakdown.map((item, idx) => (
+                  <div key={idx} className="p-3.5 rounded-xl bg-slate-900/90 border border-slate-800">
+                    <span className="text-[11px] text-slate-400 block leading-tight">{item.category}</span>
+                    <span className="text-2xl font-black font-mono text-white mt-1 block">{item.count}</span>
+                    <span className="text-[10px] text-slate-500 font-mono">{Math.round((item.count/24)*100)}% of section fleet</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+          </div>
+
+        </div>
+      );
+    }
+
+    // =========================================================================
+    // 11. ALERTS VIEW
+    // =========================================================================
+    function AlertsView({ alerts }) {
+      const [filter, setFilter] = useState('all');
+
+      const filtered = alerts.filter(a => {
+        if (filter === 'critical') return a.type === 'critical';
+        if (filter === 'warning') return a.type === 'warning';
+        if (filter === 'info') return a.type === 'info';
+        return true;
+      });
+
+      return (
+        <div className="space-y-6">
+          <div className="p-5 rounded-2xl bg-[#0c1220] border border-slate-800 shadow-xl space-y-4">
+            
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+              <div>
+                <h2 className="text-base font-bold text-white flex items-center gap-2">
+                  <Icons.Alerts />
+                  <span>Central Railway Safety & Section Alerts</span>
+                  <span className="text-[10px] px-2 py-0.5 rounded bg-rose-500/20 text-rose-300 font-mono">
+                    {alerts.length} RECORDED
+                  </span>
+                </h2>
+                <p className="text-xs text-slate-400">Critical precedence conflicts, speed restrictions, and automated signal logs</p>
+              </div>
+
+              <div className="flex items-center gap-2">
+                {['all', 'critical', 'warning', 'info'].map((f) => (
+                  <button
+                    key={f}
+                    onClick={() => setFilter(f)}
+                    className={`px-3 py-1 rounded-lg text-xs font-semibold uppercase font-mono transition-all ${
+                      filter === f
+                        ? 'bg-cyan-500 text-slate-950 font-bold shadow-md shadow-cyan-500/20'
+                        : 'bg-slate-900 text-slate-400 hover:text-slate-200 border border-slate-800'
+                    }`}
+                  >
+                    {f}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="space-y-3">
+              {filtered.map((alert) => {
+                const badge = getStatusBadge(alert.type);
+                return (
+                  <div
+                    key={alert.id}
+                    className={`p-4 rounded-xl bg-slate-900/90 border ${badge.border} shadow-lg flex flex-col md:flex-row md:items-center justify-between gap-4`}
+                  >
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-2">
+                        <span className={`px-2 py-0.5 rounded text-[10px] font-bold font-mono uppercase border ${badge.bg} ${badge.text} ${badge.border}`}>
+                          {alert.type}
+                        </span>
+                        <span className="text-sm font-bold text-white">{alert.title}</span>
+                        <span className="text-xs text-slate-500 font-mono">• {alert.timestamp}</span>
+                      </div>
+                      <p className="text-xs text-slate-300">{alert.description}</p>
+                      <div className="flex items-center gap-2 pt-1 text-[10px] text-slate-400 font-mono">
+                        <span>Affected Train: <strong className="text-cyan-300">{alert.trainId}</strong></span>
+                        <span>•</span>
+                        <span>Track Sector: <strong className="text-cyan-300">{alert.trackId}</strong></span>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2 shrink-0">
+                      <button className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold rounded-lg border border-slate-700 transition-colors">
+                        Acknowledge
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+          </div>
+        </div>
+      );
+    }
+
+    // =========================================================================
+    // 12. SETTINGS VIEW
+    // =========================================================================
+    function SettingsView({ projectInfo }) {
+      return (
+        <div className="space-y-6">
+          <div className="p-5 rounded-2xl bg-[#0c1220] border border-slate-800 shadow-xl space-y-6">
+            
+            <div>
+              <h2 className="text-base font-bold text-white flex items-center gap-2">
+                <Icons.Settings />
+                <span>Control Room & Project Configuration</span>
+              </h2>
+              <p className="text-xs text-slate-400">Settings and parameter definitions for college major project demonstration</p>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 text-xs">
+              
+              <div className="p-4 rounded-xl bg-slate-900/90 border border-slate-800 space-y-3">
+                <h4 className="font-bold text-white uppercase font-mono text-[11px] text-cyan-400">Project Metadata</h4>
+                <div className="space-y-2">
+                  <div className="flex justify-between py-1.5 border-b border-slate-800">
+                    <span className="text-slate-400">Project Title:</span>
+                    <span className="text-white font-semibold">{projectInfo.name}</span>
+                  </div>
+                  <div className="flex justify-between py-1.5 border-b border-slate-800">
+                    <span className="text-slate-400">Scope / Theme:</span>
+                    <span className="text-cyan-300">{projectInfo.subtitle}</span>
+                  </div>
+                  <div className="flex justify-between py-1.5 border-b border-slate-800">
+                    <span className="text-slate-400">Monitored Corridor:</span>
+                    <span className="text-slate-200">{projectInfo.sectionName}</span>
+                  </div>
+                  <div className="flex justify-between py-1.5">
+                    <span className="text-slate-400">System Build:</span>
+                    <span className="text-emerald-400 font-mono">{projectInfo.version}</span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="p-4 rounded-xl bg-slate-900/90 border border-slate-800 space-y-3">
+                <h4 className="font-bold text-white uppercase font-mono text-[11px] text-cyan-400">Display Parameters</h4>
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between py-1.5 border-b border-slate-800">
+                    <span className="text-slate-300">Theme Mode:</span>
+                    <span className="px-2 py-0.5 rounded bg-cyan-950 text-cyan-300 font-mono font-bold">Dark Control Room</span>
+                  </div>
+                  <div className="flex items-center justify-between py-1.5 border-b border-slate-800">
+                    <span className="text-slate-300">Data Source Mode:</span>
+                    <span className="px-2 py-0.5 rounded bg-emerald-950 text-emerald-300 font-mono font-bold">Static / Decoupled Data</span>
+                  </div>
+                  <div className="flex items-center justify-between py-1.5 border-b border-slate-800">
+                    <span className="text-slate-300">Clock Sync:</span>
+                    <span className="text-slate-300 font-mono">Realtime Local (1 sec tick)</span>
+                  </div>
+                  <div className="flex items-center justify-between py-1.5">
+                    <span className="text-slate-300">Backend Ready:</span>
+                    <span className="text-cyan-400 font-mono font-bold">Yes (Clean API Hook Points)</span>
+                  </div>
+                </div>
+              </div>
+
+            </div>
+
+          </div>
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>
