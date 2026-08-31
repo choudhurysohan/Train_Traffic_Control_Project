@@ -1,80 +1,233 @@
 /**
- * Train Traffic Control Scheduler & Routing Service
- * Models the railway layout (stations, blocks) and computes safe headway,
- * signal aspects, precedence loop diversions, and schedule logs.
+ * Generalized Graph Railway Traffic Control & ML Dataset Engine
+ * 
+ * Supports:
+ * - Parameterized Stations with variable platform counts
+ * - Parameterized Inter-station sections with variable line counts (1, 2, 3 lines)
+ * - Single-line bottleneck locking & bi-directional conflict resolution
+ * - Priority-based dispatching (1-10 scale)
+ * - Dynamic Speed Regulation (advisory speed pacing to prevent hard dead-stops)
+ * - Live ML Dataset collection & JSON/CSV exports
  */
 
-export const STATIONS = [
-  { id: 'BSB', name: 'Station I (Varanasi)', km: 0, pct: 0 },
-  { id: 'CJN', name: 'Station II (Central Junction)', km: 14.5, pct: 45 },
-  { id: 'RVS', name: 'Station III (Riverside)', km: 22, pct: 68 },
-  { id: 'EYD', name: 'Station IV (East Yard)', km: 32, pct: 100 }
-];
-
-export const BLOCKS_UP = [
-  { id: 'BLK-101', name: 'Varanasi Exit', startKm: 0, endKm: 5 },
-  { id: 'BLK-102', name: 'West Approach', startKm: 5, endKm: 13.5 },
-  { id: 'BLK-103', name: 'Central Junction Main', startKm: 13.5, endKm: 15.5 },
-  { id: 'BLK-104', name: 'Loop 1 (UP Siding)', startKm: 13.5, endKm: 15.5, isLoop: true },
-  { id: 'BLK-105', name: 'Riverside Approach', startKm: 15.5, endKm: 21 },
-  { id: 'BLK-106', name: 'Riverside Sector Main', startKm: 21, endKm: 23 },
-  { id: 'BLK-107', name: 'Riverside Siding', startKm: 21, endKm: 23, isLoop: true },
-  { id: 'BLK-108', name: 'East Outskirts', startKm: 23, endKm: 32 }
-];
-
-export const BLOCKS_DN = [
-  { id: 'BLK-201', name: 'East Inbound', startKm: 32, endKm: 23 },
-  { id: 'BLK-202', name: 'Riverside Sector Main', startKm: 23, endKm: 21 },
-  { id: 'BLK-203', name: 'Riverside DN Siding', startKm: 23, endKm: 21, isLoop: true },
-  { id: 'BLK-204', name: 'Riverside Exit', startKm: 21, endKm: 15.5 },
-  { id: 'BLK-205', name: 'Central Junction DN Main', startKm: 15.5, endKm: 13.5 },
-  { id: 'BLK-206', name: 'Loop 2 (DN Siding)', startKm: 15.5, endKm: 13.5, isLoop: true },
-  { id: 'BLK-207', name: 'West Outbound', startKm: 13.5, endKm: 5 },
-  { id: 'BLK-208', name: 'Varanasi Entry', startKm: 5, endKm: 0 }
-];
+export const DEFAULT_CORRIDOR = {
+  id: 'corridor-default',
+  name: 'Standard 4-Station Mixed Corridor',
+  totalKm: 36,
+  stations: [
+    {
+      id: 'S1',
+      name: 'Station I',
+      code: 'I',
+      subtitle: 'Varanasi Terminal',
+      km: 0,
+      platformCount: 4,
+      platforms: [
+        { id: 'S1-PF1', name: 'PF 1', index: 0 },
+        { id: 'S1-PF2', name: 'PF 2', index: 1 },
+        { id: 'S1-PF3', name: 'PF 3', index: 2 },
+        { id: 'S1-PF4', name: 'PF 4', index: 3 }
+      ]
+    },
+    {
+      id: 'S2',
+      name: 'Station II',
+      code: 'II',
+      subtitle: 'Central Choke Point',
+      km: 12,
+      platformCount: 2,
+      platforms: [
+        { id: 'S2-PF1', name: 'PF 1', index: 0 },
+        { id: 'S2-PF2', name: 'PF 2', index: 1 }
+      ]
+    },
+    {
+      id: 'S3',
+      name: 'Station III',
+      code: 'III',
+      subtitle: 'Riverside Junction',
+      km: 24,
+      platformCount: 3,
+      platforms: [
+        { id: 'S3-PF1', name: 'PF 1', index: 0 },
+        { id: 'S3-PF2', name: 'PF 2', index: 1 },
+        { id: 'S3-PF3', name: 'PF 3', index: 2 }
+      ]
+    },
+    {
+      id: 'S4',
+      name: 'Station IV',
+      code: 'IV',
+      subtitle: 'East Freight Terminal',
+      km: 36,
+      platformCount: 4,
+      platforms: [
+        { id: 'S4-PF1', name: 'PF 1', index: 0 },
+        { id: 'S4-PF2', name: 'PF 2', index: 1 },
+        { id: 'S4-PF3', name: 'PF 3', index: 2 },
+        { id: 'S4-PF4', name: 'PF 4', index: 3 }
+      ]
+    }
+  ],
+  sections: [
+    {
+      id: 'SEC-1-2',
+      fromStationId: 'S1',
+      toStationId: 'S2',
+      name: 'Section I–II',
+      typeLabel: 'Single-Line Choke (1 Track)',
+      startKm: 0,
+      endKm: 12,
+      lengthKm: 12,
+      lineCount: 1,
+      lines: [
+        { id: 'SEC-1-2-L1', lineIndex: 0, name: 'Single Bottleneck Track' }
+      ]
+    },
+    {
+      id: 'SEC-2-3',
+      fromStationId: 'S2',
+      toStationId: 'S3',
+      name: 'Section II–III',
+      typeLabel: 'Dual Mainline (2 Tracks)',
+      startKm: 12,
+      endKm: 24,
+      lengthKm: 12,
+      lineCount: 2,
+      lines: [
+        { id: 'SEC-2-3-L1', lineIndex: 0, name: 'Track Line 1' },
+        { id: 'SEC-2-3-L2', lineIndex: 1, name: 'Track Line 2' }
+      ]
+    },
+    {
+      id: 'SEC-3-4',
+      fromStationId: 'S3',
+      toStationId: 'S4',
+      name: 'Section III–IV',
+      typeLabel: 'Single-Line Choke (1 Track)',
+      startKm: 24,
+      endKm: 36,
+      lengthKm: 12,
+      lineCount: 1,
+      lines: [
+        { id: 'SEC-3-4-L1', lineIndex: 0, name: 'Single Bottleneck Track' }
+      ]
+    }
+  ]
+};
 
 /**
- * Calculates predicted timetables for a train based on its speed and routing.
- * Returns arrival and departure times for each station node.
+ * Procedural random corridor generator
  */
-export function calculateSchedule(train, departureTimeStr = '14:00') {
+export function generateRandomCorridor(stationCount = 4) {
+  const romanNumerals = ['I', 'II', 'III', 'IV', 'V', 'VI'];
+  const stationSubtitles = ['Terminal West', 'Junction Cabin', 'River Valley', 'East Depot', 'Highland Spur', 'Terminal East'];
+  const stations = [];
+  const sections = [];
+  let currentKm = 0;
+
+  for (let i = 0; i < stationCount; i++) {
+    // Variable platform counts (e.g. 2 to 4 platforms per station)
+    const pfCount = i === 0 || i === stationCount - 1 ? Math.floor(Math.random() * 2) + 3 : Math.floor(Math.random() * 3) + 2;
+    const stId = `S${i + 1}`;
+    const platforms = [];
+    for (let p = 0; p < pfCount; p++) {
+      platforms.push({ id: `${stId}-PF${p + 1}`, name: `PF ${p + 1}`, index: p });
+    }
+
+    stations.push({
+      id: stId,
+      name: `Station ${romanNumerals[i] || (i + 1)}`,
+      code: romanNumerals[i] || `${i + 1}`,
+      subtitle: stationSubtitles[i] || `Sector Node ${i + 1}`,
+      km: currentKm,
+      platformCount: pfCount,
+      platforms
+    });
+
+    if (i > 0) {
+      const prevSt = stations[i - 1];
+      const secLength = Math.floor(Math.random() * 4) + 8; // 8 to 12 km
+      // Random line count: 1, 2, or 3 lines
+      const randVal = Math.random();
+      const lineCount = randVal < 0.45 ? 1 : randVal < 0.85 ? 2 : 3;
+      const secId = `SEC-${i}-${i + 1}`;
+      const lines = [];
+      for (let l = 0; l < lineCount; l++) {
+        lines.push({
+          id: `${secId}-L${l + 1}`,
+          lineIndex: l,
+          name: lineCount === 1 ? 'Single Bottleneck Track' : `Track Line ${l + 1}`
+        });
+      }
+
+      sections.push({
+        id: secId,
+        fromStationId: prevSt.id,
+        toStationId: stId,
+        name: `Section ${romanNumerals[i - 1]}–${romanNumerals[i]}`,
+        typeLabel: lineCount === 1 ? 'Single-Line Choke (1 Track)' : `${lineCount} Parallel Lines`,
+        startKm: prevSt.km,
+        endKm: currentKm,
+        lengthKm: currentKm - prevSt.km,
+        lineCount,
+        lines
+      });
+    }
+
+    if (i < stationCount - 1) {
+      currentKm += Math.floor(Math.random() * 4) + 10;
+    }
+  }
+
+  return {
+    id: 'corridor-random-' + Math.floor(Math.random() * 10000),
+    name: `Dynamic Corridor (${stationCount} Stations, Variable Lines)`,
+    totalKm: currentKm,
+    stations,
+    sections
+  };
+}
+
+/**
+ * Predict initial arrival and departure timetables
+ */
+export function calculateGraphSchedule(train, corridor, departureTimeStr = '14:00') {
   const [depHour, depMin] = departureTimeStr.split(':').map(Number);
   let currentTime = depHour * 60 + depMin;
-
   const resultSchedule = [];
-  const isUp = train.direction === 'UP (Westbound)';
-  const orderedStations = isUp ? STATIONS : [...STATIONS].reverse();
 
-  orderedStations.forEach((station, idx) => {
+  const originIdx = corridor.stations.findIndex(s => s.id === train.originStationId);
+  const destIdx = corridor.stations.findIndex(s => s.id === train.destinationStationId);
+  if (originIdx === -1 || destIdx === -1) return [];
+
+  const isForward = destIdx >= originIdx;
+  const stationsPath = isForward
+    ? corridor.stations.slice(originIdx, destIdx + 1)
+    : corridor.stations.slice(destIdx, originIdx + 1).reverse();
+
+  stationsPath.forEach((station, idx) => {
     if (idx === 0) {
-      // Starting Station
       resultSchedule.push({
         stationId: station.id,
         stationName: station.name,
         arrival: '--:--',
         departure: departureTimeStr,
-        delay: '+0 min',
-        status: 'On-Time'
+        status: 'Departing'
       });
     } else {
-      // Calculate travel time based on distance delta and average travel speed
-      const prevStation = orderedStations[idx - 1];
+      const prevStation = stationsPath[idx - 1];
       const dist = Math.abs(station.km - prevStation.km);
-      // Assuming avg speed in simulation is 80% of maxSpeed due to acceleration/braking
-      const speedKmh = Math.max(30, train.maxSpeed * 0.8);
-      const travelTimeMin = Math.round((dist / speedKmh) * 60);
-      
+      const speedKmh = Math.max(40, train.maxSpeed * 0.85);
+      const travelTimeMin = Math.max(1, Math.round((dist / speedKmh) * 60));
+
       currentTime += travelTimeMin;
       const arrHour = Math.floor(currentTime / 60) % 24;
       const arrMin = Math.round(currentTime % 60);
       const arrivalStr = `${String(arrHour).padStart(2, '0')}:${String(arrMin).padStart(2, '0')}`;
 
-      // Add dwell time (e.g. Express dwell = 3 mins, Freight loop = 10 mins)
-      let dwell = 2;
-      if (train.category === 'Freight') dwell = 10;
-      else if (train.category === 'Superfast') dwell = 2;
-      else if (train.category === 'Express') dwell = 4;
-
+      // Dwell time
+      const dwell = train.priority >= 8 ? 2 : train.category === 'Freight' ? 6 : 3;
       currentTime += dwell;
       const depHourVal = Math.floor(currentTime / 60) % 24;
       const depMinVal = Math.round(currentTime % 60);
@@ -84,9 +237,8 @@ export function calculateSchedule(train, departureTimeStr = '14:00') {
         stationId: station.id,
         stationName: station.name,
         arrival: arrivalStr,
-        departure: idx === orderedStations.length - 1 ? '--:--' : departureStr,
-        delay: '+0 min',
-        status: 'On-Time'
+        departure: idx === stationsPath.length - 1 ? '--:--' : departureStr,
+        status: 'Scheduled'
       });
     }
   });
@@ -95,258 +247,396 @@ export function calculateSchedule(train, departureTimeStr = '14:00') {
 }
 
 /**
- * Updates positions, checks headway spacing, resolves priority conflicts,
- * and sets signal colors for each block segment.
+ * Main Graph Simulation State Transition Step
  */
-export function simulateStep(trains, timeStepSec = 5, currentSimTime = 0) {
-  // Deep clone to avoid mutating React states directly
+export function simulateGraphStep(trains, corridor, timeStepSec = 1, currentSimTime = 0) {
   let updatedTrains = trains.map(t => ({
     ...t,
     schedule: t.schedule ? t.schedule.map(s => ({ ...s })) : []
   }));
 
   const logs = [];
+  const decisions = [];
 
-  // 1. Move Trains and assign block indices based on direction
+  // 1. Build occupancy maps for sections and station platforms
+  const sectionOccupancy = {};
+  corridor.sections.forEach(sec => {
+    sectionOccupancy[sec.id] = sec.lines.map(() => null);
+  });
+
+  const platformOccupancy = {};
+  corridor.stations.forEach(st => {
+    st.platforms.forEach(pf => {
+      platformOccupancy[pf.id] = null;
+    });
+  });
+
+  // Populate current occupancies
+  updatedTrains.forEach(train => {
+    if (train.status === 'Completed') return;
+
+    if (train.locState === 'IN_SECTION' && train.currentSectionId && train.assignedLineIndex !== null) {
+      if (sectionOccupancy[train.currentSectionId]) {
+        sectionOccupancy[train.currentSectionId][train.assignedLineIndex] = train.id;
+      }
+    } else if ((train.locState === 'AT_PLATFORM' || train.locState === 'REQUESTING_LINE') && train.currentPlatformId) {
+      platformOccupancy[train.currentPlatformId] = train.id;
+    }
+  });
+
+  // 2. Process active trains in section
   updatedTrains = updatedTrains.map(train => {
-    if (train.isWaiting) {
-      if (train.waitTimeRemaining > 0) {
-        train.waitTimeRemaining -= timeStepSec;
-        train.speed = 0;
+    if (train.status === 'Completed') return train;
+
+    if (train.locState === 'IN_SECTION') {
+      const section = corridor.sections.find(s => s.id === train.currentSectionId);
+      if (!section) return train;
+
+      const isForward = train.direction > 0;
+      const speedKms = (train.currentSpeed || train.maxSpeed) / 3600;
+      const deltaKm = speedKms * timeStepSec;
+
+      if (isForward) {
+        train.km += deltaKm;
       } else {
-        train.isWaiting = false;
-        train.speed = train.targetSpeed || train.maxSpeed;
-        logs.push({
-          timestamp: new Date().toLocaleTimeString(),
-          type: 'info',
-          title: `Train Departure`,
-          description: `${train.name} (${train.id}) finished hold, departing block.`
-        });
+        train.km -= deltaKm;
       }
-    }
 
-    const isUp = train.direction === 'UP (Westbound)';
-    const speedKms = train.speed / 3600; // km per second
-    const deltaKm = speedKms * timeStepSec;
+      // Check section progress percentage
+      const totalSecLen = Math.abs(section.endKm - section.startKm);
+      const coveredKm = isForward ? (train.km - section.startKm) : (section.endKm - train.km);
+      train.progressPct = Math.min(100, Math.max(0, Math.round((coveredKm / totalSecLen) * 100)));
 
-    if (!train.isWaiting) {
-      if (isUp) {
-        train.km = Math.min(32, train.km + deltaKm);
-      } else {
-        train.km = Math.max(0, train.km - deltaKm);
+      // Dynamic Speed Pacing check when approaching next station
+      const nextStationId = isForward ? section.toStationId : section.fromStationId;
+      const nextStation = corridor.stations.find(s => s.id === nextStationId);
+      const distToNextStation = isForward ? (section.endKm - train.km) : (train.km - section.startKm);
+
+      // Check if next station has any free platform
+      const freePlatforms = nextStation ? nextStation.platforms.filter(pf => !platformOccupancy[pf.id] || platformOccupancy[pf.id] === train.id) : [];
+
+      if (distToNextStation < 2.5 && freePlatforms.length === 0) {
+        // Platform Congestion ahead! Regulate speed down to 40 km/h
+        if (!train.pacingAdvisory) {
+          train.pacingAdvisory = true;
+          train.pacingSpeed = 40;
+          train.currentSpeed = 40;
+          train.signalAspect = 'YELLOW';
+          train.stopsAvoided = (train.stopsAvoided || 0) + 1;
+
+          logs.push({
+            timestamp: new Date().toLocaleTimeString(),
+            type: 'warning',
+            title: 'Dynamic Speed Pacing (Anti-Deadstop)',
+            description: `Train ${train.name} (${train.id}) paced down to 40 km/h due to full platforms at ${nextStation.name}.`
+          });
+
+          decisions.push({
+            trainId: train.id,
+            action: 'SPEED_PACING_REGULATION',
+            targetSpeed: 40,
+            reason: `Platform Congestion at ${nextStation.name}`
+          });
+        }
+      } else if (train.pacingAdvisory && freePlatforms.length > 0) {
+        // Platform cleared ahead, resume normal speed
+        train.pacingAdvisory = false;
+        train.currentSpeed = train.maxSpeed;
+        train.signalAspect = 'GREEN';
       }
-      train.pct = Math.round((train.km / 32) * 100);
-    }
 
-    // Check station arrival bounds to trigger dwell time
-    const targetStations = isUp ? STATIONS.slice(1) : STATIONS.slice(0, -1).reverse();
-    targetStations.forEach(st => {
-      const distanceToStation = Math.abs(train.km - st.km);
-      if (distanceToStation < 0.1 && !train.visitedStations?.includes(st.id)) {
-        train.visitedStations = [...(train.visitedStations || []), st.id];
-        
-        // Check if this station is the destination
-        const isDestination = train.destinationStationId === st.id || (train.destination && train.destination.includes(st.id)) || (train.destination && train.destination.includes(st.name));
-        
-        if (isDestination) {
-          train.speed = 0;
+      // Check Station Arrival
+      const hasReachedEnd = isForward ? train.km >= section.endKm : train.km <= section.startKm;
+      if (hasReachedEnd) {
+        // Allocate free platform at next station
+        const allocatedPf = freePlatforms.length > 0 ? freePlatforms[0] : (nextStation ? nextStation.platforms[0] : null);
+        const pfId = allocatedPf ? allocatedPf.id : `${nextStationId}-PF1`;
+        const pfName = allocatedPf ? allocatedPf.name : 'PF 1';
+
+        train.locState = 'AT_PLATFORM';
+        train.currentStationId = nextStationId;
+        train.currentPlatformId = pfId;
+        train.currentPlatformName = pfName;
+        train.currentSpeed = 0;
+        train.km = nextStation ? nextStation.km : train.km;
+        train.progressPct = 0;
+        train.assignedLineIndex = null;
+        train.pacingAdvisory = false;
+
+        // Check if this is the final destination
+        if (nextStationId === train.destinationStationId) {
           train.status = 'Completed';
-          train.nextSignal = 'SIG-END [N/A]';
+          train.signalAspect = 'RED';
+
           logs.push({
             timestamp: new Date().toLocaleTimeString(),
             type: 'info',
             title: 'Destination Reached',
-            description: `${train.name} (${train.id}) reached its destination: ${st.name}`
+            description: `Train ${train.name} (${train.id}) arrived at final destination: ${nextStation?.name} (${pfName}).`
           });
-          return train;
+
+          decisions.push({
+            trainId: train.id,
+            action: 'JOURNEY_COMPLETED',
+            stationId: nextStationId,
+            platformId: pfId
+          });
+        } else {
+          // Intermediate station dwell time
+          train.dwellTimeRemaining = train.priority >= 8 ? 8 : train.category === 'Freight' ? 18 : 12;
+
+          logs.push({
+            timestamp: new Date().toLocaleTimeString(),
+            type: 'info',
+            title: 'Station Arrival',
+            description: `Train ${train.name} (${train.id}) arrived at intermediate ${nextStation?.name} on ${pfName}.`
+          });
+
+          decisions.push({
+            trainId: train.id,
+            action: 'PLATFORM_ALLOCATED',
+            stationId: nextStationId,
+            platformId: pfId
+          });
         }
 
-        train.isWaiting = true;
-        train.dwellTimer = (train.dwellTimer || 0) + 1;
-        let dwell = 15; // default 15s for sim fast forward
-        if (train.category === 'Superfast') dwell = 15;
-        else if (train.category === 'Express') dwell = 25;
-        else if (train.category === 'Freight') dwell = 45;
-        train.waitTimeRemaining = dwell;
-        train.speed = 0;
+        // Update schedule status
+        if (train.schedule) {
+          const sIndex = train.schedule.findIndex(s => s.stationId === nextStationId);
+          if (sIndex !== -1) {
+            train.schedule[sIndex].status = 'Arrived';
+          }
+        }
+      }
+    } else if (train.locState === 'AT_PLATFORM') {
+      if (train.dwellTimeRemaining > 0) {
+        train.dwellTimeRemaining -= timeStepSec;
+        train.currentSpeed = 0;
+      } else {
+        // Dwell finished, request forward line
+        train.locState = 'REQUESTING_LINE';
+        train.signalAspect = 'YELLOW';
+      }
+    }
 
-        // Log station arrival
+    return train;
+  });
+
+  // 3. Line Reservation & Priority Preemption Solver for Trains requesting line
+  const requestingTrains = updatedTrains.filter(t => t.locState === 'REQUESTING_LINE');
+
+  // Sort requesting trains by numerical priority (10 down to 1) so Express gets green light first
+  requestingTrains.sort((a, b) => (Number(b.priority) || 1) - (Number(a.priority) || 1));
+
+  requestingTrains.forEach(train => {
+    const isForward = train.direction > 0;
+    const currentStIdx = corridor.stations.findIndex(s => s.id === train.currentStationId);
+    if (currentStIdx === -1) return;
+
+    const nextStIdx = isForward ? currentStIdx + 1 : currentStIdx - 1;
+    if (nextStIdx < 0 || nextStIdx >= corridor.stations.length) return;
+
+    const nextSt = corridor.stations[nextStIdx];
+    const secId = isForward
+      ? `SEC-${currentStIdx + 1}-${nextStIdx + 1}`
+      : `SEC-${nextStIdx + 1}-${currentStIdx + 1}`;
+
+    const section = corridor.sections.find(s => s.id === secId);
+    if (!section) return;
+
+    const lines = sectionOccupancy[secId] || [];
+
+    // Bottleneck Rule (1-Line Section)
+    if (section.lineCount === 1) {
+      const isLineBusy = lines[0] !== null;
+
+      if (isLineBusy) {
+        // Line is busy! Hold train at platform with RED signal
+        train.signalAspect = 'RED';
+        train.currentSpeed = 0;
+        train.delaySeconds = (train.delaySeconds || 0) + timeStepSec;
+
+        const occupyingTrainId = lines[0];
+        decisions.push({
+          trainId: train.id,
+          action: 'PLATFORM_HOLD_RED',
+          sectionId: secId,
+          reason: `Single-line bottleneck occupied by Train ${occupyingTrainId}`
+        });
+      } else {
+        // Line is FREE! Dispatch high-priority train
+        lines[0] = train.id;
+        sectionOccupancy[secId][0] = train.id;
+
+        train.locState = 'IN_SECTION';
+        train.currentSectionId = secId;
+        train.assignedLineIndex = 0;
+        train.currentSpeed = train.maxSpeed;
+        train.signalAspect = 'GREEN';
+        train.km = isForward ? section.startKm : section.endKm;
+        train.progressPct = 0;
+
         logs.push({
           timestamp: new Date().toLocaleTimeString(),
           type: 'info',
-          title: 'Station Arrival',
-          description: `${train.name} (${train.id}) arrived at platform: ${st.name}`
+          title: 'Single-Line Clearance Granted',
+          description: `Priority ${train.priority} Train ${train.name} (${train.id}) entered bottleneck ${section.name}.`
         });
 
-        // Update schedule delays if any
-        if (train.schedule) {
-          const scheduleIndex = train.schedule.findIndex(s => s.stationId === st.id);
-          if (scheduleIndex !== -1) {
-            train.schedule[scheduleIndex].status = 'Arrived';
-          }
-        }
+        decisions.push({
+          trainId: train.id,
+          action: 'DISPATCH_TO_SINGLE_LINE',
+          sectionId: secId,
+          lineIndex: 0,
+          priority: train.priority
+        });
       }
-    });
-
-    // Determine current block id
-    const blocks = isUp ? BLOCKS_UP : BLOCKS_DN;
-    let currentBlock = null;
-    
-    // Find matching block
-    for (let b of blocks) {
-      if (isUp) {
-        if (train.km >= b.startKm && train.km <= b.endKm) {
-          // If train is on loop line
-          if (train.track.toLowerCase().includes('loop') && b.isLoop) {
-            currentBlock = b;
-            break;
-          }
-          if (!train.track.toLowerCase().includes('loop') && !b.isLoop) {
-            currentBlock = b;
-          }
-        }
-      } else {
-        if (train.km <= b.startKm && train.km >= b.endKm) {
-          if (train.track.toLowerCase().includes('loop') && b.isLoop) {
-            currentBlock = b;
-            break;
-          }
-          if (!train.track.toLowerCase().includes('loop') && !b.isLoop) {
-            currentBlock = b;
-          }
-        }
-      }
-    }
-
-    if (currentBlock) {
-      train.currentBlock = `${currentBlock.id} (${currentBlock.name})`;
-      train.currentBlockId = currentBlock.id;
-    }
-
-    return train;
-  });
-
-  // 2. Precedence / Overtake Solver (Interlocking routing)
-  // Check pairs of trains going the same direction where trailing train is higher priority
-  for (let i = 0; i < updatedTrains.length; i++) {
-    for (let j = 0; j < updatedTrains.length; j++) {
-      if (i === j) continue;
-      const trainA = updatedTrains[i]; // Leading train
-      const trainB = updatedTrains[j]; // Trailing train
-
-      const isSameDirection = trainA.direction === trainB.direction;
-      if (!isSameDirection) continue;
-
-      const isUp = trainA.direction === 'UP (Westbound)';
-      const distBehind = isUp ? (trainA.km - trainB.km) : (trainB.km - trainA.km);
-
-      // If trainB (trailing) is High priority and trainA is Low (Freight),
-      // and trainB is getting close (within 4km), divert trainA to a Loop siding
-      if (distBehind > 0 && distBehind < 5.0) {
-        const priorityA = Number(trainA.priority) || 1;
-        const priorityB = Number(trainB.priority) || 1;
-
-        if (priorityB > priorityA && !trainA.track.toLowerCase().includes('loop')) {
-          // Find next loop block
-          const blocks = isUp ? BLOCKS_UP : BLOCKS_DN;
-          const nextLoop = blocks.find(b => b.isLoop && (isUp ? b.startKm >= trainA.km : b.startKm <= trainA.km));
-          
-          if (nextLoop) {
-            // Divert leading train (trainA) to loop line
-            trainA.track = isUp ? 'Track 3 (Loop UP)' : 'Track 4 (Loop DN)';
-            trainA.isWaiting = true;
-            trainA.waitTimeRemaining = 35; // wait 35s for fast express to overtake
-            trainA.speed = 0;
-            trainA.nextSignal = `SIG-${nextLoop.id} [RED]`;
-
-            logs.push({
-              timestamp: new Date().toLocaleTimeString(),
-              type: 'critical',
-              title: 'Precedence Bypass Routing',
-              description: `Conflict Solved: Diverted ${trainA.name} to Siding Loop to allow High-Priority ${trainB.name} to pass.`
-            });
-          }
-        }
-      }
-    }
-  }
-
-  // 3. Signal Aspect Scheduler
-  // Calculate dynamic aspects based on occupancy and distance ahead
-  updatedTrains = updatedTrains.map((train, idx) => {
-    if (train.km >= 32 && train.direction === 'UP (Westbound)') {
-      train.speed = 0;
-      train.status = 'Completed';
-      train.nextSignal = 'SIG-END [N/A]';
-      return train;
-    }
-    if (train.km <= 0 && train.direction === 'DN (Eastbound)') {
-      train.speed = 0;
-      train.status = 'Completed';
-      train.nextSignal = 'SIG-END [N/A]';
-      return train;
-    }
-
-    const isUp = train.direction === 'UP (Westbound)';
-    
-    // Find closest train in front
-    let minDistanceAhead = Infinity;
-    let leadingTrain = null;
-
-    updatedTrains.forEach((other, otherIdx) => {
-      if (idx === otherIdx) return;
-      if (other.direction !== train.direction) return;
-      if (other.status === 'Completed') return;
-
-      const dist = isUp ? (other.km - train.km) : (train.km - other.km);
-      if (dist > 0 && dist < minDistanceAhead) {
-        // Double check loop overlap
-        const bothOnMain = !train.track.toLowerCase().includes('loop') && !other.track.toLowerCase().includes('loop');
-        const bothOnSameLoop = train.track.toLowerCase().includes('loop') && other.track.toLowerCase().includes('loop') && train.currentBlockId === other.currentBlockId;
-        
-        if (bothOnMain || bothOnSameLoop) {
-          minDistanceAhead = dist;
-          leadingTrain = other;
-        }
-      }
-    });
-
-    // Aspect rules
-    let aspect = 'GREEN';
-    let targetSpeed = train.maxSpeed;
-
-    if (minDistanceAhead < 2.0) {
-      aspect = 'RED';
-      targetSpeed = 0;
-      train.speed = 0;
-      train.status = 'Critical';
-      train.dwellTimer = (train.dwellTimer || 0) + 1;
-      
-      if (!train.isWaiting) {
-        train.isWaiting = true;
-        train.waitTimeRemaining = 5; // try again in 5s
-      }
-    } else if (minDistanceAhead < 4.0) {
-      aspect = 'YELLOW';
-      targetSpeed = Math.min(train.maxSpeed, 45); // Caution speed
-      train.speed = targetSpeed;
-      train.status = 'Warning';
     } else {
-      aspect = 'GREEN';
-      train.status = train.isWaiting ? 'Warning' : 'Active';
-      if (!train.isWaiting) {
-        train.speed = train.maxSpeed;
+      // Multi-Line Section (2 or 3 parallel tracks)
+      // Find an unoccupied line
+      let freeLineIdx = lines.findIndex(occ => occ === null);
+
+      if (freeLineIdx !== -1) {
+        lines[freeLineIdx] = train.id;
+        sectionOccupancy[secId][freeLineIdx] = train.id;
+
+        train.locState = 'IN_SECTION';
+        train.currentSectionId = secId;
+        train.assignedLineIndex = freeLineIdx;
+        train.currentSpeed = train.maxSpeed;
+        train.signalAspect = 'GREEN';
+        train.km = isForward ? section.startKm : section.endKm;
+        train.progressPct = 0;
+
+        logs.push({
+          timestamp: new Date().toLocaleTimeString(),
+          type: 'info',
+          title: 'Multi-Line Dispatch',
+          description: `Train ${train.name} (${train.id}) dispatched on Track Line ${freeLineIdx + 1} across ${section.name}.`
+        });
+
+        decisions.push({
+          trainId: train.id,
+          action: 'DISPATCH_TO_MULTI_LINE',
+          sectionId: secId,
+          lineIndex: freeLineIdx
+        });
+      } else {
+        // All parallel lines full
+        train.signalAspect = 'RED';
+        train.currentSpeed = 0;
+        train.delaySeconds = (train.delaySeconds || 0) + timeStepSec;
       }
     }
-
-    const signalId = `SIG-${train.currentBlockId || '101'}A`;
-    train.nextSignal = `${signalId} [${aspect}]`;
-
-    return train;
   });
+
+  // 4. Capture ML Dataset Record for this time step
+  const datasetRecord = {
+    step: currentSimTime,
+    timestamp: new Date().toISOString(),
+    corridorId: corridor.id,
+    activeTrainsCount: updatedTrains.filter(t => t.status !== 'Completed').length,
+    completedTrainsCount: updatedTrains.filter(t => t.status === 'Completed').length,
+    totalDelaySeconds: updatedTrains.reduce((acc, t) => acc + (t.delaySeconds || 0), 0),
+    stopsAvoidedTotal: updatedTrains.reduce((acc, t) => acc + (t.stopsAvoided || 0), 0),
+    trains: updatedTrains.map(t => ({
+      id: t.id,
+      name: t.name,
+      priority: Number(t.priority) || 1,
+      category: t.category,
+      speed: Math.round(t.currentSpeed || 0),
+      locState: t.locState,
+      stationId: t.currentStationId || null,
+      platformId: t.currentPlatformId || null,
+      sectionId: t.currentSectionId || null,
+      lineIndex: t.assignedLineIndex,
+      km: Number((t.km || 0).toFixed(2)),
+      signal: t.signalAspect,
+      pacingAdvisory: t.pacingAdvisory ? 1 : 0
+    })),
+    decisions
+  };
 
   return {
     trains: updatedTrains,
-    logs
+    logs,
+    datasetRecord
   };
+}
+
+/**
+ * Exports Dataset to JSON format
+ */
+export function exportDatasetAsJSON(records) {
+  const jsonStr = JSON.stringify(records, null, 2);
+  const blob = new Blob([jsonStr], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `railway_traffic_dataset_${Date.now()}.json`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+/**
+ * Exports Dataset to Flattened CSV format for Pandas/PyTorch ML ingestion
+ */
+export function exportDatasetAsCSV(records) {
+  if (!records || records.length === 0) return;
+
+  const rows = [];
+  rows.push([
+    'step',
+    'timestamp',
+    'corridor_id',
+    'train_id',
+    'train_name',
+    'priority',
+    'category',
+    'speed_kmh',
+    'loc_state',
+    'station_id',
+    'platform_id',
+    'section_id',
+    'line_index',
+    'km_position',
+    'signal_aspect',
+    'pacing_advisory',
+    'total_delay_sec',
+    'stops_avoided'
+  ].join(','));
+
+  records.forEach(rec => {
+    rec.trains.forEach(t => {
+      rows.push([
+        rec.step,
+        `"${rec.timestamp}"`,
+        `"${rec.corridorId}"`,
+        `"${t.id}"`,
+        `"${t.name}"`,
+        t.priority,
+        `"${t.category}"`,
+        t.speed,
+        `"${t.locState}"`,
+        `"${t.stationId || ''}"`,
+        `"${t.platformId || ''}"`,
+        `"${t.sectionId || ''}"`,
+        t.lineIndex !== null ? t.lineIndex : -1,
+        t.km,
+        `"${t.signal}"`,
+        t.pacingAdvisory,
+        rec.totalDelaySeconds,
+        rec.stopsAvoidedTotal
+      ].join(','));
+    });
+  });
+
+  const csvStr = rows.join('\n');
+  const blob = new Blob([csvStr], { type: 'text/csv' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `railway_traffic_dataset_${Date.now()}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
 }

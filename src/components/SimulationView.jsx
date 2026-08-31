@@ -1,8 +1,13 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Icons, getStatusBadge } from './Icons';
-import { simulateStep, calculateSchedule, STATIONS } from '../utils/schedulerService';
-
-const PREPOPULATED_TRAINS = [];
+import {
+  DEFAULT_CORRIDOR,
+  generateRandomCorridor,
+  calculateGraphSchedule,
+  simulateGraphStep,
+  exportDatasetAsJSON,
+  exportDatasetAsCSV
+} from '../utils/schedulerService';
 
 function getNextTrainName(currentTrains) {
   const letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
@@ -16,35 +21,38 @@ function getNextTrainName(currentTrains) {
 }
 
 export function SimulationView() {
-  const [trains, setTrains] = useState(() => {
-    return PREPOPULATED_TRAINS.map(t => ({
-      ...t,
-      schedule: calculateSchedule(t, "14:00")
-    }));
-  });
-
+  const [corridor, setCorridor] = useState(DEFAULT_CORRIDOR);
+  const [trains, setTrains] = useState([]);
   const [isRunning, setIsRunning] = useState(false);
-  const [simSpeed, setSimSpeed] = useState(2); // default 2x speed
+  const [simSpeed, setSimSpeed] = useState(2); // 2x fast forward
   const [simTime, setSimTime] = useState(0);
   const [simLogs, setSimLogs] = useState([
-    { timestamp: "14:00:00", type: "info", title: "Simulation Initialized", description: "Varanasi - Prayagraj Western corridor active." }
+    {
+      timestamp: new Date().toLocaleTimeString(),
+      type: "info",
+      title: "Graph Corridor Initialized",
+      description: "Ready to simulate multi-platform stations and variable bottleneck lines."
+    }
   ]);
-  const [selectedSimTrain, setSelectedSimTrain] = useState(null);
+  const [selectedTrain, setSelectedTrain] = useState(null);
 
-  // Manual Dispatch Form state
+  // ML Dataset Records store
+  const [datasetRecords, setDatasetRecords] = useState([]);
+
+  // Manual Dispatch Form
   const [dispatchForm, setDispatchForm] = useState({
     id: "TR-" + Math.floor(10000 + Math.random() * 90000),
-    name: "A", // defaults to first letter A
-    category: "Express",
-    priority: "6", // default priority value
-    direction: "UP (Westbound)",
-    speed: 80,
-    maxSpeed: 110,
-    destinationStationId: "EYD",
-    departureTime: "14:05"
+    name: "A",
+    category: "Superfast",
+    priority: "10",
+    originStationId: DEFAULT_CORRIDOR.stations[0].id,
+    originPlatformId: DEFAULT_CORRIDOR.stations[0].platforms[0].id,
+    destinationStationId: DEFAULT_CORRIDOR.stations[DEFAULT_CORRIDOR.stations.length - 1].id,
+    speed: 120,
+    maxSpeed: 140,
+    departureTime: "14:00"
   });
 
-  // Ref for the simulator loop interval
   const intervalRef = useRef(null);
 
   // Simulation tick loop
@@ -53,13 +61,16 @@ export function SimulationView() {
       const stepMs = 1000 / simSpeed;
       intervalRef.current = setInterval(() => {
         setTrains(prevTrains => {
-          const { trains: nextTrains, logs } = simulateStep(prevTrains, 1, simTime);
+          const { trains: nextTrains, logs, datasetRecord } = simulateGraphStep(prevTrains, corridor, 1, simTime);
           if (logs.length > 0) {
-            setSimLogs(prevLogs => [...logs, ...prevLogs].slice(0, 100)); // Cap logs at 100
+            setSimLogs(prev => [...logs, ...prev].slice(0, 150));
+          }
+          if (datasetRecord) {
+            setDatasetRecords(prev => [...prev, datasetRecord].slice(-2000)); // Keep last 2000 steps
           }
           return nextTrains;
         });
-        setSimTime(prevTime => prevTime + 1);
+        setSimTime(prev => prev + 1);
       }, stepMs);
     } else {
       if (intervalRef.current) clearInterval(intervalRef.current);
@@ -68,7 +79,7 @@ export function SimulationView() {
     return () => {
       if (intervalRef.current) clearInterval(intervalRef.current);
     };
-  }, [isRunning, simSpeed, simTime]);
+  }, [isRunning, simSpeed, simTime, corridor]);
 
   const handleStartStop = () => {
     setIsRunning(!isRunning);
@@ -76,8 +87,8 @@ export function SimulationView() {
       {
         timestamp: new Date().toLocaleTimeString(),
         type: "info",
-        title: isRunning ? "Simulation Paused" : "Simulation Started",
-        description: isRunning ? "Dynamic scheduling paused." : `System running at ${simSpeed}x fast forward.`
+        title: isRunning ? "Simulation Paused" : "Simulation Running",
+        description: isRunning ? "Scheduler paused." : `Backend optimization running at ${simSpeed}x.`
       },
       ...prev
     ]);
@@ -86,69 +97,96 @@ export function SimulationView() {
   const handleReset = () => {
     setIsRunning(false);
     setSimTime(0);
-    setTrains(
-      PREPOPULATED_TRAINS.map(t => ({
-        ...t,
-        schedule: calculateSchedule(t, "14:00"),
-        visitedStations: ["BSB"]
-      }))
-    );
-    setSelectedSimTrain(null);
+    setTrains([]);
+    setSelectedTrain(null);
+    setDatasetRecords([]);
     setDispatchForm(prev => ({
       ...prev,
       id: "TR-" + Math.floor(10000 + Math.random() * 90000),
       name: "A"
     }));
     setSimLogs([
-      { timestamp: new Date().toLocaleTimeString(), type: "info", title: "Simulation Reset", description: "Cleared active simulated train corridor state." }
+      {
+        timestamp: new Date().toLocaleTimeString(),
+        type: "info",
+        title: "Simulation Reset",
+        description: "Cleared all trains and reset corridor state."
+      }
     ]);
+  };
+
+  const handleRandomizeCorridor = () => {
+    handleReset();
+    const newCorridor = generateRandomCorridor(4);
+    setCorridor(newCorridor);
+    setDispatchForm(prev => ({
+      ...prev,
+      originStationId: newCorridor.stations[0].id,
+      originPlatformId: newCorridor.stations[0].platforms[0].id,
+      destinationStationId: newCorridor.stations[newCorridor.stations.length - 1].id
+    }));
+    setSimLogs(prev => [
+      {
+        timestamp: new Date().toLocaleTimeString(),
+        type: "info",
+        title: "New Topology Generated",
+        description: `Generated procedural corridor: ${newCorridor.stations.map(s => `${s.name} (${s.platformCount} PFs)`).join(' ➔ ')}.`
+      },
+      ...prev
+    ]);
+  };
+
+  const handleLoadDefaultCorridor = () => {
+    handleReset();
+    setCorridor(DEFAULT_CORRIDOR);
+    setDispatchForm(prev => ({
+      ...prev,
+      originStationId: DEFAULT_CORRIDOR.stations[0].id,
+      originPlatformId: DEFAULT_CORRIDOR.stations[0].platforms[0].id,
+      destinationStationId: DEFAULT_CORRIDOR.stations[DEFAULT_CORRIDOR.stations.length - 1].id
+    }));
   };
 
   const handleDispatch = (e) => {
     e.preventDefault();
 
-    const isUp = dispatchForm.direction === "UP (Westbound)";
-    const selectedStation = STATIONS.find(s => s.id === dispatchForm.destinationStationId) || STATIONS[STATIONS.length - 1];
+    const originSt = corridor.stations.find(s => s.id === dispatchForm.originStationId) || corridor.stations[0];
+    const destSt = corridor.stations.find(s => s.id === dispatchForm.destinationStationId) || corridor.stations[corridor.stations.length - 1];
+    const originPf = originSt.platforms.find(p => p.id === dispatchForm.originPlatformId) || originSt.platforms[0];
+
+    const originIdx = corridor.stations.findIndex(s => s.id === originSt.id);
+    const destIdx = corridor.stations.findIndex(s => s.id === destSt.id);
+    const direction = destIdx >= originIdx ? 1 : -1;
 
     const newTrain = {
       id: dispatchForm.id,
       name: dispatchForm.name,
-      source: isUp ? "Station I (Varanasi)" : "Station IV (East Yard)",
-      destination: selectedStation.name,
-      destinationStationId: selectedStation.id,
-      speed: Number(dispatchForm.speed),
-      maxSpeed: Number(dispatchForm.maxSpeed),
-      track: isUp ? "Track 1 (UP Main)" : "Track 2 (DN Main)",
-      delay: 0,
-      status: "Active",
-      priority: dispatchForm.priority,
       category: dispatchForm.category,
-      km: isUp ? 0 : 32,
-      pct: isUp ? 0 : 100,
-      currentBlock: isUp ? "BLK-101 (Varanasi Exit)" : "BLK-201 (East Inbound)",
-      currentBlockId: isUp ? "BLK-101" : "BLK-201",
-      nextSignal: isUp ? "SIG-101A [GREEN]" : "SIG-201A [GREEN]",
-      direction: dispatchForm.direction,
-      visitedStations: [isUp ? "BSB" : "EYD"]
+      priority: Number(dispatchForm.priority),
+      currentSpeed: 0,
+      maxSpeed: Number(dispatchForm.speed),
+      originStationId: originSt.id,
+      originPlatformId: originPf.id,
+      destinationStationId: destSt.id,
+      destinationStationName: destSt.name,
+      direction,
+      locState: 'REQUESTING_LINE', // ready at platform to enter bottleneck line
+      currentStationId: originSt.id,
+      currentPlatformId: originPf.id,
+      currentPlatformName: originPf.name,
+      currentSectionId: null,
+      assignedLineIndex: null,
+      km: originSt.km,
+      progressPct: 0,
+      signalAspect: 'YELLOW',
+      status: 'Active',
+      delaySeconds: 0,
+      stopsAvoided: 0,
+      pacingAdvisory: false,
+      dwellTimeRemaining: 0
     };
 
-    newTrain.schedule = calculateSchedule(newTrain, dispatchForm.departureTime);
-
-    // Limit schedule array to the selected destination station
-    const targetStationIdx = STATIONS.findIndex(s => s.id === selectedStation.id);
-    if (newTrain.schedule && targetStationIdx !== -1) {
-      if (isUp) {
-        newTrain.schedule = newTrain.schedule.filter(s => {
-          const stIdx = STATIONS.findIndex(st => st.id === s.stationId);
-          return stIdx !== -1 && stIdx <= targetStationIdx;
-        });
-      } else {
-        newTrain.schedule = newTrain.schedule.filter(s => {
-          const stIdx = STATIONS.findIndex(st => st.id === s.stationId);
-          return stIdx !== -1 && stIdx >= targetStationIdx;
-        });
-      }
-    }
+    newTrain.schedule = calculateGraphSchedule(newTrain, corridor, dispatchForm.departureTime);
 
     const nextName = getNextTrainName([...trains, newTrain]);
 
@@ -157,13 +195,12 @@ export function SimulationView() {
       {
         timestamp: new Date().toLocaleTimeString(),
         type: "info",
-        title: "Train Dispatched",
-        description: `Train ${newTrain.name} (${newTrain.id}) dispatched toward ${newTrain.destination}.`
+        title: "Train Placed at Platform",
+        description: `Train ${newTrain.name} (${newTrain.category}, Priority ${newTrain.priority}) ready at ${originSt.name} - ${originPf.name} destined for ${destSt.name}.`
       },
       ...prev
     ]);
 
-    // Generate new random ID for next dispatch
     setDispatchForm(prev => ({
       ...prev,
       id: "TR-" + Math.floor(10000 + Math.random() * 90000),
@@ -171,12 +208,8 @@ export function SimulationView() {
     }));
   };
 
-  const getSignalColorClass = (signalStr) => {
-    if (!signalStr) return "bg-emerald-500 border-emerald-400";
-    if (signalStr.includes("RED")) return "bg-rose-500 border-rose-400";
-    if (signalStr.includes("YELLOW")) return "bg-amber-500 border-amber-400";
-    return "bg-emerald-500 border-emerald-400";
-  };
+  // Helper for origin station platform list in form
+  const originStation = corridor.stations.find(s => s.id === dispatchForm.originStationId) || corridor.stations[0];
 
   return (
     <div className="space-y-6">
@@ -186,13 +219,13 @@ export function SimulationView() {
         <div>
           <h2 className="text-base font-bold text-white flex items-center gap-2">
             <Icons.Traffic />
-            <span>Interactive Simulation Sandbox</span>
-            <span className="text-[10px] px-2 py-0.5 rounded bg-cyan-500/20 text-cyan-300 font-mono">
-              DYNAMIC INTERLOCKING & ROUTING
+            <span>Graph Corridor Traffic Simulation & ML Dataset Generator</span>
+            <span className="text-[10px] px-2 py-0.5 rounded bg-cyan-500/20 text-cyan-300 font-mono font-bold">
+              VARIABLE PLATFORMS & BOTTLENECKS
             </span>
           </h2>
-          <p className="text-xs text-slate-400">
-            Manually inject trains into the section corridor and monitor collision-avoidance spacing rules.
+          <p className="text-xs text-slate-400 mt-0.5">
+            Simulates dynamic single-line bottlenecks, multi-track overtaking, priority preemption (1–10), and advisory speed pacing.
           </p>
         </div>
 
@@ -231,166 +264,280 @@ export function SimulationView() {
               </button>
             ))}
           </div>
+
+          <div className="flex items-center gap-1.5 pl-2 border-l border-slate-800">
+            <button
+              onClick={handleRandomizeCorridor}
+              className="px-2.5 py-1.5 bg-purple-950/60 hover:bg-purple-900/60 border border-purple-700/60 text-purple-300 text-xs font-semibold rounded-lg transition-all flex items-center gap-1"
+              title="Generate new procedural topology with random platforms and lines"
+            >
+              <span>🎲 Random Corridor</span>
+            </button>
+            <button
+              onClick={handleLoadDefaultCorridor}
+              className="px-2 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-400 text-xs font-semibold rounded-lg transition-all"
+              title="Load standard 4-station test corridor"
+            >
+              Default
+            </button>
+          </div>
         </div>
       </div>
 
-      {/* 2. Interactive SVG Map */}
+      {/* 2. Interactive Dynamic Graph SVG Layout */}
       <div className="p-5 rounded-2xl bg-[#0c1220] border border-slate-800 shadow-xl space-y-4">
-        <h3 className="text-sm font-bold text-white flex items-center gap-2">
-          <Icons.Track />
-          <span>Section Track Topology & Live Node Occupancy</span>
-        </h3>
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+          <h3 className="text-sm font-bold text-white flex items-center gap-2">
+            <Icons.Track />
+            <span>Corridor Topology: {corridor.name}</span>
+          </h3>
+          <div className="flex items-center gap-3 text-xs">
+            <span className="flex items-center gap-1 text-emerald-400">
+              <span className="w-2 h-2 rounded-full bg-emerald-400"></span> Green = Clear
+            </span>
+            <span className="flex items-center gap-1 text-amber-400">
+              <span className="w-2 h-2 rounded-full bg-amber-400"></span> Yellow = Regulated / Ready
+            </span>
+            <span className="flex items-center gap-1 text-rose-400">
+              <span className="w-2 h-2 rounded-full bg-rose-400"></span> Red = Line Locked Hold
+            </span>
+          </div>
+        </div>
 
-        <div className="bg-[#060a12] p-5 rounded-xl border border-slate-800/90 overflow-x-auto relative shadow-inner">
-          <div className="min-w-[950px] relative">
-            <svg className="w-full h-72 select-none" viewBox="0 0 950 280">
+        <div className="bg-[#050811] p-5 rounded-xl border border-slate-800/90 overflow-x-auto relative shadow-inner">
+          <div className="min-w-[1020px] relative">
+            <svg className="w-full h-80 select-none" viewBox="0 0 1020 320">
               
-              {/* Grid guide verticals */}
-              <g stroke="#1e293b" strokeWidth="1" strokeDasharray="3,6" opacity="0.4">
-                <line x1="100" y1="10" x2="100" y2="250" />
-                <line x1="437.5" y1="10" x2="437.5" y2="250" />
-                <line x1="610" y1="10" x2="610" y2="250" />
-                <line x1="850" y1="10" x2="850" y2="250" />
-              </g>
+              {/* Background Station Region Shading */}
+              {corridor.stations.map((st, idx) => {
+                const totalStations = corridor.stations.length;
+                const availableWidth = 860;
+                const stationX = 80 + idx * (availableWidth / (totalStations - 1));
+                return (
+                  <g key={st.id}>
+                    {/* Vertical station guide background */}
+                    <rect
+                      x={stationX - 38}
+                      y="15"
+                      width="76"
+                      height="280"
+                      rx="10"
+                      fill="#0b1120"
+                      stroke="#1e293b"
+                      strokeWidth="1"
+                      opacity="0.8"
+                    />
 
-              {/* Station Indicators */}
-              <g fill="#475569" fontSize="10" fontWeight="bold" fontFamily="JetBrains Mono" className="opacity-95">
-                <rect x="75" y="10" width="50" height="18" rx="4" fill="#0f172a" stroke="#334155" />
-                <text x="93" y="22" fill="#38bdf8">I</text>
-                <text x="50" y="42" fill="#64748b" fontSize="8">Station I (Varanasi)</text>
+                    {/* Station Header Badge */}
+                    <rect
+                      x={stationX - 30}
+                      y="22"
+                      width="60"
+                      height="22"
+                      rx="6"
+                      fill="#0f172a"
+                      stroke="#38bdf8"
+                      strokeWidth="1.2"
+                    />
+                    <text x={stationX} y="36" fill="#38bdf8" fontSize="10" fontWeight="bold" fontFamily="JetBrains Mono" textAnchor="middle">
+                      {st.name}
+                    </text>
+                    <text x={stationX} y="54" fill="#64748b" fontSize="8" textAnchor="middle">
+                      {st.platformCount} Platforms
+                    </text>
+                  </g>
+                );
+              })}
 
-                <rect x="412" y="10" width="50" height="18" rx="4" fill="#0f172a" stroke="#334155" />
-                <text x="427" y="22" fill="#38bdf8">II</text>
-                <text x="375" y="42" fill="#64748b" fontSize="8">Station II (Central Jcn)</text>
+              {/* Inter-Station Track Lines */}
+              {corridor.sections.map((sec, secIdx) => {
+                const totalStations = corridor.stations.length;
+                const availableWidth = 860;
+                const x1 = 80 + secIdx * (availableWidth / (totalStations - 1)) + 38;
+                const x2 = 80 + (secIdx + 1) * (availableWidth / (totalStations - 1)) - 38;
 
-                <rect x="585" y="10" width="50" height="18" rx="4" fill="#0f172a" stroke="#334155" />
-                <text x="597" y="22" fill="#38bdf8">III</text>
-                <text x="555" y="42" fill="#64748b" fontSize="8">Station III (Riverside)</text>
+                const lineYStart = 160 - ((sec.lineCount - 1) * 26) / 2;
 
-                <rect x="825" y="10" width="50" height="18" rx="4" fill="#0f172a" stroke="#334155" />
-                <text x="837" y="22" fill="#38bdf8">IV</text>
-                <text x="785" y="42" fill="#64748b" fontSize="8">Station IV (East Yard)</text>
-              </g>
+                return (
+                  <g key={sec.id}>
+                    {/* Section Label Badge */}
+                    <rect
+                      x={(x1 + x2) / 2 - 60}
+                      y="20"
+                      width="120"
+                      height="18"
+                      rx="4"
+                      fill="#0f172a"
+                      stroke={sec.lineCount === 1 ? '#f43f5e' : '#3b82f6'}
+                      strokeWidth="1"
+                      strokeDasharray={sec.lineCount === 1 ? '3,2' : 'none'}
+                    />
+                    <text x={(x1 + x2) / 2} y="32" fill={sec.lineCount === 1 ? '#fda4af' : '#93c5fd'} fontSize="8" fontWeight="bold" textAnchor="middle" fontFamily="JetBrains Mono">
+                      {sec.lineCount === 1 ? '⚠️ SINGLE BOTTLENECK' : `${sec.lineCount} PARALLEL LINES`}
+                    </text>
 
-              {/* Track Rails */}
-              {/* UP Main Track */}
-              <g strokeWidth="3" strokeLinecap="round" fill="none">
-                <line x1="100" y1="90" x2="850" y2="90" stroke="#1e293b" strokeWidth="6" />
-                <line x1="100" y1="90" x2="850" y2="90" stroke="#3b82f6" opacity="0.8" />
-                <text x="105" y="80" fill="#60a5fa" fontSize="8" fontWeight="bold" fontFamily="JetBrains Mono">
-                  TRACK 1: UP MAIN ◄◄◄
-                </text>
-              </g>
+                    {/* Section middle track lines */}
+                    {sec.lines.map((line, lIdx) => {
+                      const lineY = lineYStart + lIdx * 26;
+                      const isOccupied = trains.some(t => t.locState === 'IN_SECTION' && t.currentSectionId === sec.id && t.assignedLineIndex === lIdx);
 
-              {/* DN Main Track */}
-              <g strokeWidth="3" strokeLinecap="round" fill="none">
-                <line x1="100" y1="170" x2="850" y2="170" stroke="#1e293b" strokeWidth="6" />
-                <line x1="100" y1="170" x2="850" y2="170" stroke="#a855f7" opacity="0.8" />
-                <text x="105" y="160" fill="#c084fc" fontSize="8" fontWeight="bold" fontFamily="JetBrains Mono">
-                  TRACK 2: DN MAIN ►►►
-                </text>
-              </g>
+                      return (
+                        <g key={line.id}>
+                          {/* Track rail line */}
+                          <line
+                            x1={x1}
+                            y1={lineY}
+                            x2={x2}
+                            y2={lineY}
+                            stroke="#1e293b"
+                            strokeWidth="6"
+                            strokeLinecap="round"
+                          />
+                          <line
+                            x1={x1}
+                            y1={lineY}
+                            x2={x2}
+                            y2={lineY}
+                            stroke={isOccupied ? (sec.lineCount === 1 ? '#f43f5e' : '#eab308') : (sec.lineCount === 1 ? '#ef4444' : '#38bdf8')}
+                            strokeWidth="2.5"
+                            strokeDasharray={sec.lineCount === 1 ? 'none' : 'none'}
+                            opacity={isOccupied ? 1 : 0.6}
+                          />
 
-              {/* Loop UP */}
-              <g strokeWidth="2" strokeDasharray="5,3" fill="none">
-                <path d="M 370 90 Q 400 45 425 45 L 480 45 Q 505 90 535 90" stroke="#eab308" />
-                <text x="415" y="38" fill="#eab308" fontSize="8" fontWeight="bold" fontFamily="JetBrains Mono">
-                  Loop UP (Siding)
-                </text>
-              </g>
+                          {/* Line Index Number */}
+                          <text x={(x1 + x2) / 2} y={lineY - 6} fill="#64748b" fontSize="7" textAnchor="middle" fontFamily="JetBrains Mono">
+                            {line.name}
+                          </text>
 
-              {/* Loop DN */}
-              <g strokeWidth="2" strokeDasharray="5,3" fill="none">
-                <path d="M 370 170 Q 400 215 425 215 L 480 215 Q 505 170 535 170" stroke="#ef4444" />
-                <text x="415" y="230" fill="#f43f5e" fontSize="8" fontWeight="bold" fontFamily="JetBrains Mono">
-                  Loop DN (Siding)
-                </text>
-              </g>
+                          {/* Section entrance signal lamps */}
+                          <circle cx={x1 + 10} cy={lineY - 8} r="3" fill={isOccupied ? '#ef4444' : '#10b981'} stroke="#0f172a" strokeWidth="1" />
+                          <circle cx={x2 - 10} cy={lineY - 8} r="3" fill={isOccupied ? '#ef4444' : '#10b981'} stroke="#0f172a" strokeWidth="1" />
+                        </g>
+                      );
+                    })}
+                  </g>
+                );
+              })}
 
-              {/* Render dynamic signals status lamps */}
-              {/* SIG 101 */}
-              <g transform="translate(200, 72)">
-                <circle cx="0" cy="0" r="4.5" fill="#0f172a" stroke="#475569" strokeWidth="1" />
-                <circle cx="0" cy="0" r="3.5" className={getSignalColorClass(trains.find(t=>t.km > 0 && t.km < 14 && t.direction.startsWith('UP'))?.nextSignal)} />
-                <text x="6" y="3" fill="#94a3b8" fontSize="7" fontFamily="JetBrains Mono">SIG-101A</text>
-              </g>
-              {/* SIG 103 (Main entrance) */}
-              <g transform="translate(360, 72)">
-                <circle cx="0" cy="0" r="4.5" fill="#0f172a" stroke="#475569" strokeWidth="1" />
-                <circle cx="0" cy="0" r="3.5" className={getSignalColorClass(trains.find(t=>t.km >= 13.5 && t.km <= 15.5 && t.direction.startsWith('UP'))?.nextSignal)} />
-                <text x="6" y="3" fill="#94a3b8" fontSize="7" fontFamily="JetBrains Mono">SIG-103A</text>
-              </g>
-              {/* SIG 105 */}
-              <g transform="translate(560, 72)">
-                <circle cx="0" cy="0" r="4.5" fill="#0f172a" stroke="#475569" strokeWidth="1" />
-                <circle cx="0" cy="0" r="3.5" className={getSignalColorClass(trains.find(t=>t.km > 15.5 && t.km < 23 && t.direction.startsWith('UP'))?.nextSignal)} />
-                <text x="6" y="3" fill="#94a3b8" fontSize="7" fontFamily="JetBrains Mono">SIG-105A</text>
-              </g>
+              {/* Station Platform Tracks & Platform Signals */}
+              {corridor.stations.map((st, idx) => {
+                const totalStations = corridor.stations.length;
+                const availableWidth = 860;
+                const stationX = 80 + idx * (availableWidth / (totalStations - 1));
 
-              {/* Render dynamic moving trains */}
-              {trains.filter(t => t.status !== 'Completed').map(train => {
-                const isUp = train.direction === 'UP (Westbound)';
-                
-                // Map KM coordinates (0 - 32) to SVG X (100 - 850)
-                const x = 100 + (train.km / 32) * 750;
-                
-                // Determine Y based on track type and location
-                let y = isUp ? 90 : 170;
-                if (train.track.includes("Loop UP")) {
-                  y = 45;
-                } else if (train.track.includes("Loop DN")) {
-                  y = 215;
-                }
+                const pfYStart = 160 - ((st.platformCount - 1) * 36) / 2;
 
-                const isSelected = selectedSimTrain?.id === train.id;
-                const statusBadge = getStatusBadge(train.status);
+                return (
+                  <g key={`st-pfs-${st.id}`}>
+                    {st.platforms.map((pf, pIdx) => {
+                      const pfY = pfYStart + pIdx * 36;
+                      const occupiedTrain = trains.find(t => (t.locState === 'AT_PLATFORM' || t.locState === 'REQUESTING_LINE') && t.currentPlatformId === pf.id);
+
+                      // Signal aspect for this platform starter
+                      let signalColor = '#10b981';
+                      if (occupiedTrain) {
+                        if (occupiedTrain.signalAspect === 'RED') signalColor = '#ef4444';
+                        else if (occupiedTrain.signalAspect === 'YELLOW') signalColor = '#f59e0b';
+                      }
+
+                      return (
+                        <g key={pf.id}>
+                          {/* Platform track line */}
+                          <line
+                            x1={stationX - 32}
+                            y1={pfY}
+                            x2={stationX + 32}
+                            y2={pfY}
+                            stroke="#334155"
+                            strokeWidth="3.5"
+                            strokeLinecap="round"
+                          />
+
+                          {/* Platform Label */}
+                          <text x={stationX - 34} y={pfY - 4} fill="#94a3b8" fontSize="7" fontFamily="JetBrains Mono">
+                            {pf.name}
+                          </text>
+
+                          {/* Platform Starter Signal */}
+                          <circle cx={stationX + 26} cy={pfY - 5} r="3" fill={signalColor} stroke="#0f172a" strokeWidth="1" />
+
+                          {/* Train sitting at platform */}
+                          {occupiedTrain && (
+                            <g
+                              transform={`translate(${stationX - 25}, ${pfY - 14})`}
+                              className="cursor-pointer"
+                              onClick={() => setSelectedTrain(occupiedTrain)}
+                            >
+                              <rect
+                                x="0"
+                                y="0"
+                                width="50"
+                                height="26"
+                                rx="5"
+                                fill={occupiedTrain.priority >= 8 ? '#1e3a8a' : occupiedTrain.category === 'Freight' ? '#4c0519' : '#111827'}
+                                stroke={selectedTrain?.id === occupiedTrain.id ? '#22d3ee' : signalColor}
+                                strokeWidth={selectedTrain?.id === occupiedTrain.id ? 2 : 1.2}
+                              />
+                              <text x="5" y="11" fill="#ffffff" fontSize="8" fontWeight="bold">
+                                🚆 {occupiedTrain.name}
+                              </text>
+                              <text x="5" y="20" fill="#94a3b8" fontSize="7" fontFamily="JetBrains Mono">
+                                P:{occupiedTrain.priority} {occupiedTrain.locState === 'AT_PLATFORM' ? `(${occupiedTrain.dwellTimeRemaining}s)` : 'WAIT'}
+                              </text>
+                            </g>
+                          )}
+                        </g>
+                      );
+                    })}
+                  </g>
+                );
+              })}
+
+              {/* Active Trains Moving in Sections */}
+              {trains.filter(t => t.locState === 'IN_SECTION').map(train => {
+                const section = corridor.sections.find(s => s.id === train.currentSectionId);
+                if (!section) return null;
+
+                const secIdx = corridor.sections.findIndex(s => s.id === section.id);
+                const totalStations = corridor.stations.length;
+                const availableWidth = 860;
+                const x1 = 80 + secIdx * (availableWidth / (totalStations - 1)) + 38;
+                const x2 = 80 + (secIdx + 1) * (availableWidth / (totalStations - 1)) - 38;
+
+                const lineYStart = 160 - ((section.lineCount - 1) * 26) / 2;
+                const lineY = lineYStart + (train.assignedLineIndex || 0) * 26;
+
+                const isForward = train.direction > 0;
+                const trainX = isForward
+                  ? x1 + (train.progressPct / 100) * (x2 - x1)
+                  : x2 - (train.progressPct / 100) * (x2 - x1);
+
+                const isSel = selectedTrain?.id === train.id;
 
                 return (
                   <g
                     key={train.id}
-                    transform={`translate(${x - 45}, ${y - 18})`}
-                    className="cursor-pointer group"
-                    onClick={() => setSelectedSimTrain(train)}
+                    transform={`translate(${trainX - 25}, ${lineY - 14})`}
+                    className="cursor-pointer"
+                    onClick={() => setSelectedTrain(train)}
                   >
-                    {/* Hover highlight ring */}
-                    <rect
-                      x="-2"
-                      y="-2"
-                      width="94"
-                      height="38"
-                      rx="8"
-                      fill="none"
-                      stroke={isSelected ? "#22d3ee" : "#334155"}
-                      strokeWidth={isSelected ? 2 : 1}
-                      className="group-hover:stroke-cyan-400 transition-colors"
-                    />
-                    
-                    {/* Main train carriage body */}
                     <rect
                       x="0"
                       y="0"
-                      width="90"
-                      height="34"
-                      rx="6"
-                      fill={train.priority === 'High' ? "#1e3a8a" : train.category === 'Freight' ? "#4c0519" : "#111827"}
-                      stroke={statusBadge.dot.replace('bg-', '#').replace('emerald', '10b981').replace('amber', 'f59e0b').replace('rose', 'ef4444').replace('blue', '3b82f6')}
-                      strokeWidth="1.5"
+                      width="52"
+                      height="26"
+                      rx="5"
+                      fill={train.priority >= 8 ? '#1e3a8a' : train.category === 'Freight' ? '#4c0519' : '#0f172a'}
+                      stroke={isSel ? '#22d3ee' : train.pacingAdvisory ? '#f59e0b' : '#10b981'}
+                      strokeWidth={isSel ? 2 : 1.5}
                     />
-
-                    {/* Train Info Text */}
-                    <text x="6" y="14" fill="#f8fafc" fontSize="8" fontWeight="bold" fontFamily="sans-serif">
-                      {train.category === 'Freight' ? '🛑 ' : '🚆 '}
-                      {train.id}
+                    <text x="5" y="11" fill="#ffffff" fontSize="8" fontWeight="bold">
+                      {train.category === 'Freight' ? '🛑 ' : '⚡ '}
+                      {train.name}
                     </text>
-                    <text x="6" y="26" fill="#94a3b8" fontSize="7" fontFamily="JetBrains Mono">
-                      {train.speed === 0 ? 'HELD' : `${Math.round(train.speed)} km/h`}
+                    <text x="5" y="21" fill={train.pacingAdvisory ? '#fde047' : '#94a3b8'} fontSize="7" fontFamily="JetBrains Mono">
+                      {Math.round(train.currentSpeed)} km/h
                     </text>
-
-                    {/* Direction arrow indication */}
-                    <polygon
-                      points={isUp ? "80,17 74,13 74,21" : "10,17 16,13 16,21"}
-                      fill={train.priority === 'High' ? "#38bdf8" : "#94a3b8"}
-                    />
                   </g>
                 );
               })}
@@ -399,34 +546,33 @@ export function SimulationView() {
           </div>
         </div>
 
-        <div className="p-3 bg-slate-900/90 rounded-lg border border-slate-800 flex items-center justify-between text-xs">
+        <div className="p-3 bg-slate-900/90 rounded-lg border border-slate-800 flex flex-wrap items-center justify-between text-xs gap-2">
           <div className="flex items-center gap-2">
-            <span className="text-cyan-400 font-bold">💡 Dispatch Control:</span>
+            <span className="text-cyan-400 font-bold">💡 Optimization Engine:</span>
             <span className="text-slate-300">
-              Click any moving train block on the SVG map above to inspect dynamic schedule arrivals and priority status.
+              In 1-line bottleneck sections, only 1 train is granted green clearance. Trailing trains approaching congested stations are paced automatically to prevent fuel-wasting stops.
             </span>
           </div>
-          {selectedSimTrain && (
+          {selectedTrain && (
             <span className="text-emerald-400 font-mono font-semibold">
-              Selected: {selectedSimTrain.name} ({selectedSimTrain.id})
+              Selected: Train {selectedTrain.name} ({selectedTrain.id}) - Priority {selectedTrain.priority}
             </span>
           )}
         </div>
       </div>
 
-      {/* 3. Columns: Left (Dispatch panel + details), Right (Timetable + Live logs) */}
+      {/* 3. Three Column Operations Row: Dispatcher, Telemetry, and ML Dataset Recorder */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
         
-        {/* Left Column (5/12 width): Dispatch Injector */}
-        <div className="lg:col-span-5 space-y-6">
-          
+        {/* Left (4/12): Manual Dispatcher */}
+        <div className="lg:col-span-4 space-y-6">
           <div className="p-5 rounded-2xl bg-[#0c1220] border border-slate-800 shadow-xl space-y-4">
             <h3 className="text-sm font-bold text-white flex items-center gap-2">
               <Icons.Traffic />
-              <span>Manually Dispatch Train</span>
+              <span>Dispatch Train to Platform</span>
             </h3>
 
-            <form onSubmit={handleDispatch} className="space-y-3.5">
+            <form onSubmit={handleDispatch} className="space-y-3">
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-[10px] uppercase font-bold text-slate-400 mb-1 font-mono">Train ID</label>
@@ -458,19 +604,11 @@ export function SimulationView() {
                     onChange={e => {
                       const cat = e.target.value;
                       let pri = "6";
-                      let speed = 80;
-                      let max = 110;
-                      if (cat === "Superfast") { pri = "10"; speed = 130; max = 160; }
-                      else if (cat === "Freight") { pri = "2"; speed = 55; max = 75; }
-                      else if (cat === "Inspection") { pri = "1"; speed = 35; max = 50; }
-
-                      setDispatchForm(prev => ({
-                        ...prev,
-                        category: cat,
-                        priority: pri,
-                        speed,
-                        maxSpeed: max
-                      }));
+                      let speed = 90;
+                      if (cat === "Superfast") { pri = "10"; speed = 130; }
+                      else if (cat === "Freight") { pri = "2"; speed = 55; }
+                      else if (cat === "Inspection") { pri = "1"; speed = 35; }
+                      setDispatchForm(prev => ({ ...prev, category: cat, priority: pri, speed }));
                     }}
                     className="w-full px-3 py-1.5 bg-slate-950 border border-slate-800 rounded-lg text-xs text-white focus:outline-none focus:border-cyan-500"
                   >
@@ -482,51 +620,72 @@ export function SimulationView() {
                 </div>
 
                 <div>
-                  <label className="block text-[10px] uppercase font-bold text-slate-400 mb-1 font-mono">Priority Weight (1-10)</label>
+                  <label className="block text-[10px] uppercase font-bold text-slate-400 mb-1 font-mono">Priority (1–10)</label>
                   <select
                     value={dispatchForm.priority}
                     onChange={e => setDispatchForm(prev => ({ ...prev, priority: e.target.value }))}
                     className="w-full px-3 py-1.5 bg-slate-950 border border-slate-800 rounded-lg text-xs text-white focus:outline-none focus:border-cyan-500 font-mono"
                   >
-                    {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(val => (
+                    {[10, 9, 8, 7, 6, 5, 4, 3, 2, 1].map(val => (
                       <option key={val} value={String(val)}>
-                        {val} {val === 10 ? ' (Express Limit)' : val === 1 ? ' (Goods Limit)' : ''}
+                        {val} {val === 10 ? '(Highest Express)' : val === 1 ? '(Lowest Goods)' : ''}
                       </option>
                     ))}
                   </select>
                 </div>
               </div>
 
+              {/* Origin Station & Platform Selection */}
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-[10px] uppercase font-bold text-slate-400 mb-1 font-mono">Direction</label>
+                  <label className="block text-[10px] uppercase font-bold text-slate-400 mb-1 font-mono">Origin Station</label>
                   <select
-                    value={dispatchForm.direction}
-                    onChange={e => setDispatchForm(prev => ({ ...prev, direction: e.target.value }))}
+                    value={dispatchForm.originStationId}
+                    onChange={e => {
+                      const st = corridor.stations.find(s => s.id === e.target.value) || corridor.stations[0];
+                      setDispatchForm(prev => ({
+                        ...prev,
+                        originStationId: st.id,
+                        originPlatformId: st.platforms[0].id
+                      }));
+                    }}
                     className="w-full px-3 py-1.5 bg-slate-950 border border-slate-800 rounded-lg text-xs text-white focus:outline-none focus:border-cyan-500"
                   >
-                    <option value="UP (Westbound)">UP (Westbound: I ➔ IV)</option>
-                    <option value="DN (Eastbound)">DN (Eastbound: IV ➔ I)</option>
+                    {corridor.stations.map(st => (
+                      <option key={st.id} value={st.id}>{st.name}</option>
+                    ))}
                   </select>
                 </div>
 
                 <div>
-                  <label className="block text-[10px] uppercase font-bold text-slate-400 mb-1 font-mono">Destination Station</label>
+                  <label className="block text-[10px] uppercase font-bold text-slate-400 mb-1 font-mono">Origin Platform</label>
+                  <select
+                    value={dispatchForm.originPlatformId}
+                    onChange={e => setDispatchForm(prev => ({ ...prev, originPlatformId: e.target.value }))}
+                    className="w-full px-3 py-1.5 bg-slate-950 border border-slate-800 rounded-lg text-xs text-white focus:outline-none focus:border-cyan-500"
+                  >
+                    {originStation.platforms.map(pf => (
+                      <option key={pf.id} value={pf.id}>{pf.name}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              {/* Destination Station & Speed */}
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-[10px] uppercase font-bold text-slate-400 mb-1 font-mono">Destination</label>
                   <select
                     value={dispatchForm.destinationStationId}
                     onChange={e => setDispatchForm(prev => ({ ...prev, destinationStationId: e.target.value }))}
-                    className="w-full px-3 py-1.5 bg-slate-950 border border-slate-800 rounded-lg text-xs text-white focus:outline-none focus:border-cyan-500 font-mono"
+                    className="w-full px-3 py-1.5 bg-slate-950 border border-slate-800 rounded-lg text-xs text-white focus:outline-none focus:border-cyan-500"
                   >
-                    {STATIONS.map(st => (
-                      <option key={st.id} value={st.id}>
-                        {st.name}
-                      </option>
+                    {corridor.stations.map(st => (
+                      <option key={st.id} value={st.id}>{st.name}</option>
                     ))}
                   </select>
                 </div>
-              </div>
 
-              <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-[10px] uppercase font-bold text-slate-400 mb-1 font-mono">Speed (km/h)</label>
                   <input
@@ -537,165 +696,162 @@ export function SimulationView() {
                     required
                   />
                 </div>
-
-                <div>
-                  <label className="block text-[10px] uppercase font-bold text-slate-400 mb-1 font-mono">Departure Time</label>
-                  <input
-                    type="text"
-                    value={dispatchForm.departureTime}
-                    onChange={e => setDispatchForm(prev => ({ ...prev, departureTime: e.target.value }))}
-                    className="w-full px-3 py-1.5 bg-slate-950 border border-slate-800 rounded-lg text-xs text-white focus:outline-none focus:border-cyan-500 font-mono font-bold"
-                    required
-                  />
-                </div>
               </div>
 
               <button
                 type="submit"
-                className="w-full py-2 bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-bold text-xs rounded-xl shadow-lg shadow-cyan-500/10 flex items-center justify-center gap-1.5 transition-all"
+                className="w-full py-2 bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-bold text-xs rounded-xl shadow-lg shadow-cyan-500/10 flex items-center justify-center gap-1.5 transition-all mt-2"
               >
-                <span>➕ Inject Into Corridor</span>
+                <span>➕ Place Train on Platform</span>
               </button>
             </form>
           </div>
+        </div>
 
-          {/* Active Sim Train List */}
+        {/* Middle (4/12): Telemetry & Selected Train */}
+        <div className="lg:col-span-4 space-y-6">
           <div className="p-5 rounded-2xl bg-[#0c1220] border border-slate-800 shadow-xl space-y-4">
             <h3 className="text-sm font-bold text-white flex items-center justify-between">
-              <span>Active Telemetry Fleet</span>
+              <span>Active Corridor Fleet</span>
               <span className="text-[10px] font-mono text-cyan-400 font-bold bg-cyan-950/40 px-2 py-0.5 rounded border border-cyan-800">
-                {trains.filter(t=>t.status!=='Completed').length} active
+                {trains.filter(t => t.status !== 'Completed').length} in section
               </span>
             </h3>
 
-            <div className="space-y-2.5 max-h-56 overflow-y-auto pr-1">
-              {trains.filter(t => t.status !== 'Completed').map(t => {
-                const isSel = selectedSimTrain?.id === t.id;
-                const badge = getStatusBadge(t.status);
-                return (
-                  <div
-                    key={t.id}
-                    onClick={() => setSelectedSimTrain(t)}
-                    className={`p-3 rounded-xl border transition-all cursor-pointer flex items-center justify-between ${
-                      isSel ? 'bg-cyan-950/20 border-cyan-500/60' : 'bg-slate-900/60 border-slate-800 hover:bg-slate-800/40'
-                    }`}
-                  >
-                    <div>
-                      <div className="text-xs font-bold text-slate-200">{t.name} ({t.id})</div>
-                      <div className="text-[10px] text-slate-400 font-mono mt-0.5">
-                        Pos: <span className="text-slate-300 font-bold">{t.km.toFixed(1)} km</span> • Track: <span className="text-cyan-400">{t.track.split(' ')[1] || t.track}</span>
+            <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
+              {trains.length === 0 ? (
+                <div className="p-8 text-center text-slate-500 text-xs rounded-xl border border-slate-800/80">
+                  No trains on tracks. Use the dispatcher on the left to inject trains.
+                </div>
+              ) : (
+                trains.map(t => {
+                  const isSel = selectedTrain?.id === t.id;
+                  const isCompleted = t.status === 'Completed';
+                  return (
+                    <div
+                      key={t.id}
+                      onClick={() => setSelectedTrain(t)}
+                      className={`p-3 rounded-xl border transition-all cursor-pointer flex items-center justify-between ${
+                        isSel ? 'bg-cyan-950/20 border-cyan-500/60' : 'bg-slate-900/60 border-slate-800 hover:bg-slate-800/40'
+                      }`}
+                    >
+                      <div>
+                        <div className="text-xs font-bold text-slate-200 flex items-center gap-1.5">
+                          <span>Train {t.name}</span>
+                          <span className="text-[9px] px-1.5 py-0.2 rounded bg-slate-800 text-slate-400 font-mono">P:{t.priority}</span>
+                          {t.pacingAdvisory && (
+                            <span className="text-[8px] px-1 rounded bg-amber-500/20 text-amber-300 font-bold">PACED</span>
+                          )}
+                        </div>
+                        <div className="text-[10px] text-slate-400 mt-0.5 font-mono">
+                          {t.locState === 'AT_PLATFORM' ? `At ${t.currentPlatformName}` : t.locState === 'IN_SECTION' ? `In ${t.currentSectionId}` : isCompleted ? 'Journey Completed' : 'Waiting Line'}
+                        </div>
+                      </div>
+
+                      <div className="text-right">
+                        <div className="text-xs font-mono font-bold text-slate-300">
+                          {isCompleted ? 'ARRIVED' : `${Math.round(t.currentSpeed)} km/h`}
+                        </div>
+                        <div className={`text-[9px] font-bold font-mono ${
+                          t.signalAspect === 'RED' ? 'text-rose-400' : t.signalAspect === 'YELLOW' ? 'text-amber-400' : 'text-emerald-400'
+                        }`}>
+                          {t.signalAspect}
+                        </div>
                       </div>
                     </div>
-
-                    <div className="text-right">
-                      <div className="text-xs font-mono font-bold text-slate-300">{Math.round(t.speed)} km/h</div>
-                      <span className={`inline-block px-1.5 py-0.5 rounded text-[8px] font-bold mt-1 ${badge.bg} ${badge.text} border ${badge.border}`}>
-                        {t.status}
-                      </span>
-                    </div>
-                  </div>
-                );
-              })}
+                  );
+                })
+              )}
             </div>
           </div>
-
         </div>
 
-        {/* Right Column (7/12 width): Schedule & Logs */}
-        <div className="lg:col-span-7 space-y-6">
-          
-          {/* Detailed Timetable Node */}
+        {/* Right (4/12): ML Dataset Recorder & Exporter */}
+        <div className="lg:col-span-4 space-y-6">
           <div className="p-5 rounded-2xl bg-[#0c1220] border border-slate-800 shadow-xl space-y-4">
-            <h3 className="text-sm font-bold text-white flex items-center gap-2">
-              <Icons.Schedule />
-              <span>Timetable Predictions & Spacing Interlocking</span>
-            </h3>
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                <Icons.Performance />
+                <span>ML Dataset Engine</span>
+              </h3>
+              <span className="text-[10px] font-mono text-purple-300 bg-purple-950/50 px-2 py-0.5 rounded border border-purple-800 font-bold">
+                {datasetRecords.length} Steps
+              </span>
+            </div>
 
-            {selectedSimTrain ? (
-              <div className="space-y-3">
-                <div className="p-3 bg-slate-950 border border-slate-800/80 rounded-xl flex items-center justify-between text-xs">
-                  <div>
-                    <div className="font-bold text-slate-200">{selectedSimTrain.name} ({selectedSimTrain.id})</div>
-                    <div className="text-[10px] text-slate-400 mt-0.5">
-                      Priority: <span className="text-slate-300">{selectedSimTrain.priority}</span> • Block: <span className="text-cyan-400 font-mono">{selectedSimTrain.currentBlock}</span>
-                    </div>
-                  </div>
-                  <div className="text-right">
-                    <div className="text-xs font-mono text-slate-400">Next Signal:</div>
-                    <div className={`text-xs font-mono font-bold mt-0.5 ${
-                      selectedSimTrain.nextSignal.includes('RED') ? 'text-rose-400' : selectedSimTrain.nextSignal.includes('YELLOW') ? 'text-amber-400' : 'text-emerald-400'
-                    }`}>{selectedSimTrain.nextSignal}</div>
-                  </div>
-                </div>
-
-                <div className="overflow-x-auto rounded-xl border border-slate-800">
-                  <table className="w-full text-left text-xs bg-slate-950/80">
-                    <thead>
-                      <tr className="bg-slate-900 border-b border-slate-800 text-slate-400 font-mono text-[10px]">
-                        <th className="py-2.5 pl-3">STATION</th>
-                        <th className="py-2.5">ARR</th>
-                        <th className="py-2.5">DEP</th>
-                        <th className="py-2.5 pr-3 text-right">STATUS</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-800/50">
-                      {selectedSimTrain.schedule?.map((item, idx) => (
-                        <tr key={idx} className="hover:bg-slate-900/40">
-                          <td className="py-2 pl-3 font-semibold text-slate-300">{item.stationName}</td>
-                          <td className="py-2 font-mono">{item.arrival}</td>
-                          <td className="py-2 font-mono">{item.departure}</td>
-                          <td className="py-2 pr-3 text-right">
-                            <span className={`text-[10px] font-bold ${
-                              item.status === 'Arrived' ? 'text-emerald-400' : 'text-slate-500'
-                            }`}>{item.status}</span>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
+            <div className="p-3.5 bg-slate-950/80 rounded-xl border border-slate-800 space-y-2 text-xs">
+              <div className="flex justify-between text-slate-400">
+                <span>Recorded Episodes:</span>
+                <span className="text-slate-200 font-mono font-bold">{datasetRecords.length}</span>
               </div>
-            ) : (
-              <div className="p-10 text-center rounded-xl bg-slate-950/50 border border-slate-800 text-slate-500 text-xs">
-                No simulated train selected. Click on a train block or carriage to inspect scheduling timeline forecasts.
+              <div className="flex justify-between text-slate-400">
+                <span>Stops Avoided (Pacing):</span>
+                <span className="text-emerald-400 font-mono font-bold">
+                  {trains.reduce((acc, t) => acc + (t.stopsAvoided || 0), 0)}
+                </span>
               </div>
-            )}
-          </div>
+              <div className="flex justify-between text-slate-400">
+                <span>Total Delay Accumulated:</span>
+                <span className="text-amber-400 font-mono font-bold">
+                  {trains.reduce((acc, t) => acc + (t.delaySeconds || 0), 0)}s
+                </span>
+              </div>
+            </div>
 
-          {/* Dynamic Interlocking Logs */}
-          <div className="p-5 rounded-2xl bg-[#0c1220] border border-slate-800 shadow-xl space-y-4">
-            <h3 className="text-sm font-bold text-white flex items-center gap-2">
-              <Icons.Alerts />
-              <span>Interlocking Telemetry Logs & Conflict Resolutions</span>
-            </h3>
+            <div className="grid grid-cols-2 gap-2.5">
+              <button
+                onClick={() => exportDatasetAsCSV(datasetRecords)}
+                disabled={datasetRecords.length === 0}
+                className="py-2 px-3 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 text-white font-bold text-xs rounded-xl shadow-md flex items-center justify-center gap-1.5 transition-all"
+              >
+                <span>📥 Export CSV</span>
+              </button>
+              <button
+                onClick={() => exportDatasetAsJSON(datasetRecords)}
+                disabled={datasetRecords.length === 0}
+                className="py-2 px-3 bg-purple-600 hover:bg-purple-500 disabled:opacity-40 text-white font-bold text-xs rounded-xl shadow-md flex items-center justify-center gap-1.5 transition-all"
+              >
+                <span>📥 Export JSON</span>
+              </button>
+            </div>
 
-            <div className="p-3 bg-slate-950/80 rounded-xl border border-slate-800 space-y-2.5 max-h-52 overflow-y-auto pr-1">
-              {simLogs.map((log, idx) => {
-                const isCritical = log.type === 'critical';
-                return (
-                  <div
-                    key={idx}
-                    className={`p-2.5 rounded-lg border text-xs flex items-start gap-2.5 ${
-                      isCritical ? 'bg-rose-950/20 border-rose-900/40' : 'bg-slate-900/60 border-slate-800/80'
-                    }`}
-                  >
-                    <span className="text-[10px] font-mono text-slate-500 mt-0.5 shrink-0">
-                      {log.timestamp}
-                    </span>
-                    <div>
-                      <div className={`font-bold ${isCritical ? 'text-rose-400' : 'text-slate-300'}`}>
-                        {log.title}
-                      </div>
-                      <p className="text-[11px] text-slate-400 mt-0.5 leading-relaxed">{log.description}</p>
-                    </div>
-                  </div>
-                );
-              })}
+            <div className="text-[10px] text-slate-500 leading-tight">
+              Directly importable into Python with <code className="text-slate-400">pandas.read_csv()</code> for training RL/GNN/scheduling models.
             </div>
           </div>
-
         </div>
 
+      </div>
+
+      {/* 4. Live Interlocking & Decision Logs */}
+      <div className="p-5 rounded-2xl bg-[#0c1220] border border-slate-800 shadow-xl space-y-3">
+        <h3 className="text-sm font-bold text-white flex items-center gap-2">
+          <Icons.Alerts />
+          <span>Interlocking Decisions & Speed Regulation Event Feed</span>
+        </h3>
+
+        <div className="p-3 bg-slate-950/80 rounded-xl border border-slate-800 space-y-2 max-h-44 overflow-y-auto pr-1">
+          {simLogs.map((log, idx) => (
+            <div
+              key={idx}
+              className={`p-2.5 rounded-lg border text-xs flex items-start gap-2.5 ${
+                log.type === 'warning' ? 'bg-amber-950/20 border-amber-900/40' : log.type === 'critical' ? 'bg-rose-950/20 border-rose-900/40' : 'bg-slate-900/60 border-slate-800/80'
+              }`}
+            >
+              <span className="text-[10px] font-mono text-slate-500 mt-0.5 shrink-0">
+                {log.timestamp}
+              </span>
+              <div>
+                <div className={`font-bold ${
+                  log.type === 'warning' ? 'text-amber-400' : log.type === 'critical' ? 'text-rose-400' : 'text-slate-300'
+                }`}>
+                  {log.title}
+                </div>
+                <p className="text-[11px] text-slate-400 mt-0.5 leading-relaxed">{log.description}</p>
+              </div>
+            </div>
+          ))}
+        </div>
       </div>
 
     </div>
