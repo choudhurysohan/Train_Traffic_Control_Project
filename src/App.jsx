@@ -12,6 +12,7 @@ import { PerformanceView } from './components/PerformanceView';
 import { AlertsView } from './components/AlertsView';
 import { SettingsView } from './components/SettingsView';
 import { TrainModal } from './components/TrainModal';
+import { SimulationView } from './components/SimulationView';
 
 export default function App() {
   const [currentTab, setCurrentTab] = useState('dashboard');
@@ -31,7 +32,8 @@ export default function App() {
   const navItems = [
     { id: 'dashboard', label: 'Dashboard', icon: Icons.Dashboard },
     { id: 'monitoring', label: 'Train Monitoring', icon: Icons.Train, badge: data.trains.length },
-    { id: 'section', label: 'Railway Section', icon: Icons.Track, highlight: true },
+    { id: 'section', label: 'Railway Section', icon: Icons.Track },
+    { id: 'simulation', label: 'Simulation Sandbox', icon: Icons.Traffic, highlight: true },
     { id: 'track_status', label: 'Track Status', icon: Icons.Gauge },
     { id: 'signal_status', label: 'Signal Status', icon: Icons.Signal },
     { id: 'schedule', label: 'Train Schedule', icon: Icons.Schedule },
@@ -220,6 +222,7 @@ export default function App() {
           {currentTab === 'dashboard' && <DashboardView data={data} setCurrentTab={setCurrentTab} setSelectedTrain={setSelectedTrain} />}
           {currentTab === 'monitoring' && <TrainMonitoringView trains={data.trains} searchQuery={searchQuery} setSelectedTrain={setSelectedTrain} />}
           {currentTab === 'section' && <RailwaySectionView trains={data.trains} signals={data.signals} setSelectedTrain={setSelectedTrain} />}
+          {currentTab === 'simulation' && <SimulationView />}
           {currentTab === 'track_status' && <TrackStatusView tracks={data.tracks} />}
           {currentTab === 'signal_status' && <SignalStatusView signals={data.signals} />}
           {currentTab === 'schedule' && <TrainScheduleView schedule={data.schedule} />}
